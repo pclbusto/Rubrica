@@ -1,0 +1,10 @@
+/target
+/.antigravitycli/
+/*.db
+/.rubrica_history
+/*.epub
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

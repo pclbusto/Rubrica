@@ -1,0 +1,31 @@
+[package]
+name = "rubrica"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.37.0", features = ["full"] }
+sqlx = { version = "0.8.0", features = ["sqlite", "runtime-tokio", "chrono"] }
+axum = "0.7.5"
+anyhow = "1.0.82"
+serde = { version = "1.0.198", features = ["derive"] }
+futures = "0.3.30"
+chrono = { version = "0.4.38", features = ["serde"] }
+sanitize-filename = "0.5.0"
+thiserror = "1.0.59"
+zip = "0.6"
+tempfile = "3.10"
+roxmltree = "0.19"
+gutencore = { path = "../GutenAIR" }
+clap = { version = "4.5", features = ["derive"] }
+rustyline = "14.0"
+shell-words = "1.1"
+sha2 = "0.10"
+hex = "0.4"
+walkdir = "2.5"
+toml = "0.8"
+terminal_size = "0.3"
+
+[[bin]]
+name = "rubrica"
+path = "src/bin/rubrica.rs"
