@@ -131,17 +131,20 @@ enum Commands {
         #[arg(short, long)]
         force: bool,
     },
-    /// Asigna un libro a una serie
+    /// Asigna libros a una serie
     AssignSeries {
-        /// ID del libro en la base de datos
-        book_id: i64,
+        /// IDs de libros (coma separado, ej: 1,2,3,4,5)
+        #[arg(short, long, value_delimiter = ',')]
+        books: Vec<i64>,
         /// ID de la serie en la base de datos
-        series_id: i64,
+        #[arg(short, long)]
+        series: i64,
     },
-    /// Desvincula un libro de su serie
+    /// Desvincula libros de su serie
     UnassignSeries {
-        /// ID del libro en la base de datos
-        book_id: i64,
+        /// IDs de libros (coma separado, ej: 1,2,3,4,5)
+        #[arg(short, long, value_delimiter = ',')]
+        books: Vec<i64>,
     },
     /// Exporta aliases y config a un archivo TOML
     ExportConfig {
@@ -218,8 +221,10 @@ impl Completer for RubricaCompleter {
                 let flags: &[&str] = match cmd {
                     "normalize" => &["--base-dir"],
                     "serve" => &["--port"],
-                    "books" => &["--long", "--extralong", "--normalized", "--author", "--series", "--fts", "--ids", "--limit"],
+                    "books" => &["--long", "--extralong", "--normalized", "--author", "--series", "--fts", "--ids", "--limit", "--offset"],
                     "authors" | "series" => &["--long", "--limit", "--offset"],
+                    "assign-series" => &["--books", "--series"],
+                    "unassign-series" => &["--books"],
                     _ => &[],
                 };
                 for f in flags {
@@ -481,8 +486,8 @@ fn print_help() {
     println!("  {}   Lista todas las series", "series".yellow());
     println!("  {}   Crea una nueva serie vacía", "add-series".yellow());
     println!("  {}   Borra una serie (usar --force si tiene libros)", "delete-series".yellow());
-    println!("  {}   Asigna un libro a una serie", "assign-series".yellow());
-    println!("  {}   Desvincula un libro de su serie", "unassign-series".yellow());
+    println!("  {}   Asigna libros a una serie (--books 1,2,3 --series 42)", "assign-series".yellow());
+    println!("  {}   Desvincula libros de su serie (--books 1,2,3)", "unassign-series".yellow());
     println!("  {}   Estadísticas globales", "stats".yellow());
     println!("  {}   Verifica salud editorial de un libro", "health".yellow());
     println!("  {}   Normaliza ubicación de un libro", "normalize".yellow());
@@ -657,15 +662,23 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
             db.delete_series(series_id, force).await?;
             println!("{} {}", "Serie".green(), "eliminada.".green());
         }
-        Commands::AssignSeries { book_id, series_id } => {
+        Commands::AssignSeries { books, series } => {
             let db = LibraryDb::new(db_url).await?;
-            db.assign_book_series(book_id, series_id).await?;
-            println!("{} {} {} {} {}", "Libro".green(), book_id.to_string().cyan(), "asignado a serie".green(), series_id.to_string().cyan(), "✓".green());
+            let mut ok = 0;
+            for book_id in &books {
+                db.assign_book_series(*book_id, series).await?;
+                ok += 1;
+            }
+            println!("{} {} {} {} {}", ok.to_string().green().bold(), "libro(s) asignado(s) a serie".green(), series.to_string().cyan(), "✓".green(), format!("({} fallos)", books.len() - ok).red());
         }
-        Commands::UnassignSeries { book_id } => {
+        Commands::UnassignSeries { books } => {
             let db = LibraryDb::new(db_url).await?;
-            db.unassign_book_series(book_id).await?;
-            println!("{} {} {}", "Libro".green(), book_id.to_string().cyan(), "desvinculado de serie.".green());
+            let mut ok = 0;
+            for book_id in &books {
+                db.unassign_book_series(*book_id).await?;
+                ok += 1;
+            }
+            println!("{} {} {} {}", ok.to_string().green().bold(), "libro(s) desvinculado(s) de serie.".green(), "✓".green(), format!("({} fallos)", books.len() - ok).red());
         }
         Commands::ExportConfig { path } => {
             let db = LibraryDb::new(db_url).await?;
