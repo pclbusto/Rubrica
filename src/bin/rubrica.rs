@@ -100,6 +100,19 @@ enum Commands {
         #[arg(short, long)]
         long: bool,
     },
+    /// Crea una nueva serie vacía
+    AddSeries {
+        /// Nombre de la serie
+        name: String,
+    },
+    /// Borra una serie
+    DeleteSeries {
+        /// ID de la serie en la base de datos
+        series_id: i64,
+        /// Desvincular libros asociados antes de borrar
+        #[arg(short, long)]
+        force: bool,
+    },
     /// Exporta aliases y config a un archivo TOML
     ExportConfig {
         /// Ruta del archivo de salida
@@ -161,7 +174,7 @@ impl Completer for RubricaCompleter {
 
         if tokens_before.is_empty() {
             // Primer token -> sugerir comandos
-            for cmd in &["init", "import", "import-dir", "books", "authors", "series", "stats", "health", "normalize", "serve", "delete", "export-config", "import-config", "alias", "unalias", "exit", "help"] {
+            for cmd in &["init", "import", "import-dir", "books", "authors", "series", "add-series", "delete-series", "stats", "health", "normalize", "serve", "delete", "export-config", "import-config", "alias", "unalias", "exit", "help"] {
                 if cmd.starts_with(token) {
                     pairs.push(Pair {
                         display: cmd.to_string(),
@@ -434,6 +447,8 @@ fn print_help() {
     println!("      {}     Info avanzada (tamaño, capítulos del EPUB)", "--extralong".dimmed());
     println!("  {}   Lista todos los autores", "authors".yellow());
     println!("  {}   Lista todas las series", "series".yellow());
+    println!("  {}   Crea una nueva serie vacía", "add-series".yellow());
+    println!("  {}   Borra una serie (usar --force si tiene libros)", "delete-series".yellow());
     println!("  {}   Estadísticas globales", "stats".yellow());
     println!("  {}   Verifica salud editorial de un libro", "health".yellow());
     println!("  {}   Normaliza ubicación de un libro", "normalize".yellow());
@@ -555,6 +570,16 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
             } else {
                 print_series_table(&series_list);
             }
+        }
+        Commands::AddSeries { name } => {
+            let db = LibraryDb::new(db_url).await?;
+            let id = db.add_series(&name).await?;
+            println!("{} {} {} {}", "Serie".green(), name.yellow(), "creada con ID".green(), id.to_string().cyan());
+        }
+        Commands::DeleteSeries { series_id, force } => {
+            let db = LibraryDb::new(db_url).await?;
+            db.delete_series(series_id, force).await?;
+            println!("{} {}", "Serie".green(), "eliminada.".green());
         }
         Commands::ExportConfig { path } => {
             let db = LibraryDb::new(db_url).await?;

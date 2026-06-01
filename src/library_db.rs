@@ -438,6 +438,51 @@ impl LibraryDb {
     /// Elimina un libro de la base de datos. Si `delete_file` es true,
     /// también borra el archivo físico del disco.
     /// Devuelve la ruta del archivo borrado, o None si no se encontró.
+    /// Crea una nueva serie vacía.
+    pub async fn add_series(&self, name: &str) -> Result<i64> {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO series (name) VALUES (?) RETURNING id"
+        )
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    /// Borra una serie. Si `unlink` es true, desvincula los libros asociados primero.
+    /// Si es false y la serie tiene libros, devuelve error.
+    pub async fn delete_series(&self, series_id: i64, unlink: bool) -> Result<()> {
+        let pool = &self.pool;
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM books WHERE series_id = ?"
+        )
+        .bind(series_id)
+        .fetch_one(pool)
+        .await?;
+
+        if count.0 > 0 {
+            if unlink {
+                sqlx::query("UPDATE books SET series_id = NULL WHERE series_id = ?")
+                    .bind(series_id)
+                    .execute(pool)
+                    .await?;
+            } else {
+                return Err(anyhow::anyhow!(
+                    "La serie tiene {} libro(s) asociado(s). Usá --force para desvincularlos primero.",
+                    count.0
+                ));
+            }
+        }
+
+        sqlx::query("DELETE FROM series WHERE id = ?")
+            .bind(series_id)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn delete_book(&self, book_id: i64, delete_file: bool) -> Result<Option<String>> {
         let pool = &self.pool;
 
