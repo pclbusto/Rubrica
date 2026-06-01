@@ -83,9 +83,9 @@ enum Commands {
     Delete {
         /// ID del libro en la base de datos
         book_id: i64,
-        /// Solo borrar de la base de datos (conservar archivo en disco)
+        /// También borrar el archivo en disco (por defecto solo se borra de la base de datos)
         #[arg(short, long)]
-        db_only: bool,
+        with_file: bool,
     },
     /// Lista todos los autores con cantidad de libros
     Authors {
@@ -428,7 +428,7 @@ fn print_help() {
     println!("  health <id>              Verifica salud editorial de un libro");
     println!("  normalize <id> [--base-dir <dir>]  Normaliza ubicación de un libro");
     println!("  serve [--port <n>]       Inicia servidor OPDS (bloqueante)");
-    println!("  delete <id> [--db-only]  Borra un libro (--db-only conserva el archivo)");
+    println!("  delete <id> [--with-file]  Borra de la base de datos (por defecto conserva el archivo; --with-file también lo borra del disco)");
     println!("  export-config <ruta>     Exporta aliases a un archivo TOML");
     println!("  import-config <ruta>     Importa aliases desde un archivo TOML");
     println!("  alias <nombre> [comando]  Crea/actualiza alias (sin comando lista todos)");
@@ -510,15 +510,17 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
             tokio::signal::ctrl_c().await?;
             println!("Servidor detenido.");
         }
-        Commands::Delete { book_id, db_only } => {
+        Commands::Delete { book_id, with_file } => {
             let db = LibraryDb::new(db_url).await?;
-            let deleted_file = db.delete_book(book_id, !db_only).await?;
-            if db_only {
-                println!("Libro {} eliminado de la base de datos.", book_id);
-            } else if let Some(path) = deleted_file {
-                println!("Libro {} eliminado. Archivo borrado: {}", book_id, path);
+            let deleted_file = db.delete_book(book_id, with_file).await?;
+            if with_file {
+                if let Some(path) = deleted_file {
+                    println!("Libro {} eliminado. Archivo borrado: {}", book_id, path);
+                } else {
+                    println!("Libro {} eliminado de la base de datos (archivo no encontrado en disco).", book_id);
+                }
             } else {
-                println!("Libro {} eliminado de la base de datos (archivo no encontrado en disco).", book_id);
+                println!("Libro {} eliminado de la base de datos.", book_id);
             }
         }
         Commands::Authors { long } => {
