@@ -34,6 +34,10 @@ impl SyncSubsystem {
         let app = Router::new()
             .route("/opds", get(opds_feed))
             .route("/opds/download/:id", get(opds_download))
+            .route("/opds/authors", get(opds_authors))
+            .route("/opds/author/:id", get(opds_author_books))
+            .route("/opds/series", get(opds_series))
+            .route("/opds/series/:id", get(opds_series_books))
             .with_state(db);
 
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -73,6 +77,178 @@ async fn opds_feed(State(db): State<LibraryDb>) -> Response {
   <link rel="self" href="/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
 {entries}
 </feed>"#
+    );
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/atom+xml;profile=opds-catalog;kind=acquisition")
+        .body(Body::from(xml))
+        .unwrap()
+}
+
+/// Feed de autores para navegación OPDS.
+async fn opds_authors(State(db): State<LibraryDb>) -> Response {
+    let authors = match db.list_authors().await {
+        Ok(a) => a,
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("Database error: {}", e)),
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut entries = String::new();
+
+    for author in &authors {
+        let name = xml_escape(&author.name);
+        entries.push_str(&format!(
+            r#"  <entry>
+    <title>{name}</title>
+    <id>urn:rubrica:author:{id}</id>
+    <updated>{now}</updated>
+    <link rel="subsection" type="application/atom+xml;profile=opds-catalog;kind=acquisition" href="/opds/author/{id}" title="Libros de {name}"/>
+  </entry>
+"#,
+            name = name,
+            id = author.id,
+            now = now,
+        ));
+    }
+
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+  <id>urn:uuid:rubrica-authors</id>
+  <title>Autores</title>
+  <updated>{now}</updated>
+  <author><name>Rúbrica Core</name></author>
+  <link rel="self" href="/opds/authors" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="start" href="/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+{entries}
+</feed>"#,
+        now = now,
+        entries = entries
+    );
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/atom+xml;profile=opds-catalog;kind=acquisition")
+        .body(Body::from(xml))
+        .unwrap()
+}
+
+/// Feed de libros de un autor específico.
+async fn opds_author_books(State(db): State<LibraryDb>, AxumPath(author_id): AxumPath<i64>) -> Response {
+    let books = match db.list_books_by_author_id(author_id).await {
+        Ok(b) => b,
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("Database error: {}", e)),
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut entries = String::new();
+
+    for book in &books {
+        entries.push_str(&opds_entry(book, &now));
+    }
+
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+  <id>urn:rubrica:author:{author_id}</id>
+  <title>Libros del autor</title>
+  <updated>{now}</updated>
+  <author><name>Rúbrica Core</name></author>
+  <link rel="self" href="/opds/author/{author_id}" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="start" href="/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="up" href="/opds/authors" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+{entries}
+</feed>"#,
+        author_id = author_id,
+        now = now,
+        entries = entries
+    );
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/atom+xml;profile=opds-catalog;kind=acquisition")
+        .body(Body::from(xml))
+        .unwrap()
+}
+
+/// Feed de series para navegación OPDS.
+async fn opds_series(State(db): State<LibraryDb>) -> Response {
+    let series_list = match db.list_series().await {
+        Ok(s) => s,
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("Database error: {}", e)),
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut entries = String::new();
+
+    for s in &series_list {
+        let name = xml_escape(&s.name);
+        entries.push_str(&format!(
+            r#"  <entry>
+    <title>{name}</title>
+    <id>urn:rubrica:series:{id}</id>
+    <updated>{now}</updated>
+    <link rel="subsection" type="application/atom+xml;profile=opds-catalog;kind=acquisition" href="/opds/series/{id}" title="Libros de {name}"/>
+  </entry>
+"#,
+            name = name,
+            id = s.id,
+            now = now,
+        ));
+    }
+
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+  <id>urn:uuid:rubrica-series</id>
+  <title>Series</title>
+  <updated>{now}</updated>
+  <author><name>Rúbrica Core</name></author>
+  <link rel="self" href="/opds/series" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="start" href="/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+{entries}
+</feed>"#,
+        now = now,
+        entries = entries
+    );
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/atom+xml;profile=opds-catalog;kind=acquisition")
+        .body(Body::from(xml))
+        .unwrap()
+}
+
+/// Feed de libros de una serie específica.
+async fn opds_series_books(State(db): State<LibraryDb>, AxumPath(series_id): AxumPath<i64>) -> Response {
+    let books = match db.list_books_by_series_id(series_id).await {
+        Ok(b) => b,
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("Database error: {}", e)),
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut entries = String::new();
+
+    for book in &books {
+        entries.push_str(&opds_entry(book, &now));
+    }
+
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+  <id>urn:rubrica:series:{series_id}</id>
+  <title>Libros de la serie</title>
+  <updated>{now}</updated>
+  <author><name>Rúbrica Core</name></author>
+  <link rel="self" href="/opds/series/{series_id}" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="start" href="/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="up" href="/opds/series" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+{entries}
+</feed>"#,
+        series_id = series_id,
+        now = now,
+        entries = entries
     );
 
     Response::builder()

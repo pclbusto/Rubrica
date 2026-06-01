@@ -5,7 +5,7 @@ pub mod analytics;
 pub mod sync;
 pub mod config;
 
-pub use library_db::{LibraryDb, Book, Author, Series, SeriesStats};
+pub use library_db::{LibraryDb, Book, Author, Series, SeriesStats, TagStats};
 pub use pipeline::Pipeline;
 pub use organizer::Organizer;
 pub use analytics::{Analytics, LibraryMetrics, BookHealthReport};

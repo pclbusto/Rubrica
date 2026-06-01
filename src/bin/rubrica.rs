@@ -64,6 +64,9 @@ enum Commands {
         /// Saltear N registros antes de mostrar (para paginación)
         #[arg(long, default_value_t = 0)]
         offset: usize,
+        /// Filtrar por tag (nombre exacto)
+        #[arg(long)]
+        tag: Option<String>,
     },
     /// Normaliza la ubicación de un libro en disco
     Normalize {
@@ -169,8 +172,59 @@ enum Commands {
         /// Nombre del alias
         name: String,
     },
+    /// Edita metadatos de un libro
+    Edit {
+        /// ID del libro a editar
+        book_id: i64,
+        /// Nuevo título
+        #[arg(long)]
+        title: Option<String>,
+        /// Nuevo autor (nombre exacto o parcial - se busca/crea el autor)
+        #[arg(long)]
+        author: Option<String>,
+        /// Nueva serie ID
+        #[arg(long)]
+        series_id: Option<i64>,
+    },
+    /// Renombra una serie
+    RenameSeries {
+        /// ID de la serie
+        series_id: i64,
+        /// Nuevo nombre
+        name: String,
+    },
+    /// Gestiona tags de libros
+    Tag {
+        #[command(subcommand)]
+        action: TagAction,
+    },
     /// Sale del modo interactivo
     Exit,
+}
+
+#[derive(Subcommand, Clone)]
+enum TagAction {
+    /// Crea un nuevo tag
+    Create {
+        /// Nombre del tag
+        name: String,
+    },
+    /// Asigna un tag a un libro
+    Add {
+        /// ID del libro
+        book_id: i64,
+        /// Nombre del tag
+        tag_name: String,
+    },
+    /// Remueve un tag de un libro
+    Remove {
+        /// ID del libro
+        book_id: i64,
+        /// Nombre del tag
+        tag_name: String,
+    },
+    /// Lista todos los tags con cantidad de libros
+    List,
 }
 
 struct RubricaCompleter;
@@ -207,7 +261,7 @@ impl Completer for RubricaCompleter {
 
         if tokens_before.is_empty() {
             // Primer token -> sugerir comandos
-            for cmd in &["init", "import", "import-dir", "books", "authors", "series", "add-series", "delete-series", "assign-series", "unassign-series", "stats", "health", "normalize", "serve", "delete", "export-config", "import-config", "alias", "unalias", "exit", "help"] {
+            for cmd in &["init", "import", "import-dir", "books", "authors", "series", "add-series", "delete-series", "assign-series", "unassign-series", "edit", "rename-series", "tag", "stats", "health", "normalize", "serve", "delete", "export-config", "import-config", "alias", "unalias", "exit", "help"] {
                 if cmd.starts_with(token) {
                     pairs.push(Pair {
                         display: cmd.to_string(),
@@ -221,10 +275,11 @@ impl Completer for RubricaCompleter {
                 let flags: &[&str] = match cmd {
                     "normalize" => &["--base-dir"],
                     "serve" => &["--port"],
-                    "books" => &["--long", "--extralong", "--normalized", "--author", "--series", "--fts", "--ids", "--limit", "--offset"],
+                    "books" => &["--long", "--extralong", "--normalized", "--author", "--series", "--fts", "--ids", "--limit", "--offset", "--tag"],
                     "authors" | "series" => &["--long", "--limit", "--offset"],
                     "assign-series" => &["--books", "--series"],
                     "unassign-series" => &["--books"],
+                    "edit" => &["--title", "--author", "--series-id"],
                     _ => &[],
                 };
                 for f in flags {
@@ -244,6 +299,15 @@ impl Completer for RubricaCompleter {
                 pairs.extend(path_completions(token));
             } else if cmd == "normalize" && tokens_before.len() == 1 {
                 // Podríamos sugerir IDs de libros, pero requiere DB access async -> lo dejamos para después
+            } else if cmd == "tag" && tokens_before.len() == 1 {
+                for sub in &["create", "add", "remove", "list"] {
+                    if sub.starts_with(token) {
+                        pairs.push(Pair {
+                            display: sub.to_string(),
+                            replacement: sub.to_string(),
+                        });
+                    }
+                }
             }
         }
 
@@ -488,6 +552,16 @@ fn print_help() {
     println!("  {}   Borra una serie (usar --force si tiene libros)", "delete-series".yellow());
     println!("  {}   Asigna libros a una serie (--books 1,2,3 --series 42)", "assign-series".yellow());
     println!("  {}   Desvincula libros de su serie (--books 1,2,3)", "unassign-series".yellow());
+    println!("  {}   Edita metadatos de un libro", "edit".yellow());
+    println!("      {}        Nuevo título", "--title".dimmed());
+    println!("      {}       Nuevo autor (busca/crea)", "--author".dimmed());
+    println!("      {}      Nueva serie ID", "--series-id".dimmed());
+    println!("  {}   Renombra una serie", "rename-series".yellow());
+    println!("  {}   Gestiona tags de libros", "tag".yellow());
+    println!("      {}      Crea un tag", "create".dimmed());
+    println!("      {}         Agrega tag a libro", "add".dimmed());
+    println!("      {}      Remueve tag de libro", "remove".dimmed());
+    println!("      {}         Lista tags", "list".dimmed());
     println!("  {}   Estadísticas globales", "stats".yellow());
     println!("  {}   Verifica salud editorial de un libro", "health".yellow());
     println!("  {}   Normaliza ubicación de un libro", "normalize".yellow());
@@ -517,7 +591,7 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
         Commands::ImportDir { path } => {
             import_directory(db_url, path).await?;
         }
-        Commands::Books { long, extralong, normalized, author, series, fts, ids, limit, offset } => {
+        Commands::Books { long, extralong, normalized, author, series, fts, ids, limit, offset, tag } => {
             let db = LibraryDb::new(db_url).await?;
             let mut books = if let Some(query) = fts {
                 let parsed = parse_fts_query(&query);
@@ -527,7 +601,8 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                 let author_ref = author.as_deref();
                 let series_ref = series.as_deref();
                 let ids_ref = ids.as_deref();
-                db.list_books_filtered(norm_filter, author_ref, series_ref, ids_ref).await?
+                let tag_ref = tag.as_deref();
+                db.list_books_filtered(norm_filter, author_ref, series_ref, ids_ref, tag_ref).await?
             };
             let total = books.len();
             if offset > 0 {
@@ -679,6 +754,77 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                 ok += 1;
             }
             println!("{} {} {} {}", ok.to_string().green().bold(), "libro(s) desvinculado(s) de serie.".green(), "✓".green(), format!("({} fallos)", books.len() - ok).red());
+        }
+        Commands::Edit { book_id, title, author, series_id } => {
+            let db = LibraryDb::new(db_url).await?;
+            let mut author_id = None;
+            if let Some(author_name) = &author {
+                let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM authors WHERE name = ?")
+                    .bind(author_name)
+                    .fetch_optional(db.pool())
+                    .await?;
+                author_id = match row {
+                    Some((id,)) => Some(id),
+                    None => {
+                        let id: i64 = sqlx::query_scalar("INSERT INTO authors (name) VALUES (?) RETURNING id")
+                            .bind(author_name)
+                            .fetch_one(db.pool())
+                            .await?;
+                        Some(id)
+                    }
+                };
+            }
+            db.update_book(book_id, title.as_deref(), author_id, None, series_id).await?;
+            if title.is_some() || author.is_some() {
+                let book = db.get_book(book_id).await?;
+                if let Some(b) = book {
+                    let new_title = title.as_deref().unwrap_or(&b.title);
+                    let new_author_name = if let Some(id) = author_id {
+                        let row: Option<(String,)> = sqlx::query_as("SELECT name FROM authors WHERE id = ?")
+                            .bind(id)
+                            .fetch_optional(db.pool())
+                            .await?;
+                        row.map(|r| r.0).unwrap_or_else(|| b.author_name.clone())
+                    } else {
+                        b.author_name.clone()
+                    };
+                    db.update_fts(book_id, new_title, &new_author_name).await?;
+                }
+            }
+            println!("{} {}", "Libro".green(), "actualizado.".green());
+        }
+        Commands::RenameSeries { series_id, name } => {
+            let db = LibraryDb::new(db_url).await?;
+            db.rename_series(series_id, &name).await?;
+            println!("{} {} {}", "Serie".green(), name.yellow(), "renombrada.".green());
+        }
+        Commands::Tag { action } => {
+            let db = LibraryDb::new(db_url).await?;
+            match action {
+                TagAction::Create { name } => {
+                    db.create_tag(&name).await?;
+                    println!("{} {} {}", "Tag".green(), name.yellow(), "creado.".green());
+                }
+                TagAction::Add { book_id, tag_name } => {
+                    db.add_tag_to_book(book_id, &tag_name).await?;
+                    println!("{} {} {} {}", "Tag".green(), tag_name.yellow(), "agregado al libro".green(), book_id.to_string().cyan());
+                }
+                TagAction::Remove { book_id, tag_name } => {
+                    db.remove_tag_from_book(book_id, &tag_name).await?;
+                    println!("{} {} {} {}", "Tag".green(), tag_name.yellow(), "removido del libro".green(), book_id.to_string().cyan());
+                }
+                TagAction::List => {
+                    let tags = db.list_tags().await?;
+                    if tags.is_empty() {
+                        println!("{}", "No hay tags definidos.".yellow());
+                    } else {
+                        println!("{}", "Tags:".cyan().bold());
+                        for tag in tags {
+                            println!("  {} {} {}", tag.id.to_string().cyan(), tag.name.yellow(), format!("({} libros)", tag.book_count).dimmed());
+                        }
+                    }
+                }
+            }
         }
         Commands::ExportConfig { path } => {
             let db = LibraryDb::new(db_url).await?;

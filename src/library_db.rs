@@ -158,6 +158,22 @@ impl LibraryDb {
             );"
         ).execute(pool).await?;
 
+        // Tablas de tags
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+            );"
+        ).execute(pool).await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS book_tags (
+                book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                PRIMARY KEY (book_id, tag_id)
+            );"
+        ).execute(pool).await?;
+
         Ok(())
     }
     
@@ -197,7 +213,7 @@ impl LibraryDb {
 
     /// Lista todos los libros con nombre de autor y serie.
     pub async fn list_books(&self) -> Result<Vec<BookListItem>> {
-        self.list_books_filtered(None, None, None, None).await
+        self.list_books_filtered(None, None, None, None, None).await
     }
 
     /// Lista libros aplicando filtros opcionales.
@@ -207,6 +223,7 @@ impl LibraryDb {
         author: Option<&str>,
         series: Option<&str>,
         ids: Option<&[i64]>,
+        tag: Option<&str>,
     ) -> Result<Vec<BookListItem>> {
         let mut conditions = Vec::new();
         let mut params: Vec<String> = Vec::new();
@@ -223,11 +240,14 @@ impl LibraryDb {
             conditions.push("s.name LIKE ?".to_string());
             params.push(format!("%{}%", s));
         }
+        if let Some(t) = tag {
+            conditions.push("EXISTS (SELECT 1 FROM book_tags bt2 JOIN tags t2 ON bt2.tag_id = t2.id WHERE bt2.book_id = b.id AND t2.name = ?)".to_string());
+            params.push(t.to_string());
+        }
         if let Some(id_list) = ids {
             if !id_list.is_empty() {
                 let placeholders = id_list.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                 conditions.push(format!("b.id IN ({})", placeholders));
-                // Los IDs numéricos se binden después
             }
         }
 
@@ -502,6 +522,183 @@ impl LibraryDb {
         Ok(())
     }
 
+    /// Renombra una serie.
+    pub async fn rename_series(&self, series_id: i64, name: &str) -> Result<()> {
+        sqlx::query("UPDATE series SET name = ? WHERE id = ?")
+            .bind(name)
+            .bind(series_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Actualiza metadatos de un libro (título, autor, serie).
+    /// Si author_id es None, busca o crea el autor por nombre.
+    pub async fn update_book(&self, book_id: i64, title: Option<&str>, author_id: Option<i64>, author_name: Option<&str>, series_id: Option<i64>) -> Result<()> {
+        let pool = &self.pool;
+
+        let mut author_id = author_id;
+        if let Some(name) = author_name {
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO authors (name) VALUES (?) ON CONFLICT(name) DO UPDATE SET name=name RETURNING id"
+            )
+            .bind(name)
+            .fetch_one(pool)
+            .await?;
+            author_id = Some(id);
+        }
+
+        let mut updates = Vec::new();
+        let mut params: Vec<String> = Vec::new();
+
+        if let Some(t) = title {
+            updates.push("title = ?");
+            params.push(t.to_string());
+        }
+        if let Some(aid) = author_id {
+            updates.push("author_id = ?");
+            params.push(aid.to_string());
+        }
+        if let Some(sid) = series_id {
+            updates.push("series_id = ?");
+            params.push(sid.to_string());
+        }
+
+        if !updates.is_empty() {
+            let sql = format!("UPDATE books SET {} WHERE id = ?", updates.join(", "));
+            let mut q = sqlx::query(&sql);
+            for p in &params {
+                q = q.bind(p);
+            }
+            q = q.bind(book_id);
+            q.execute(pool).await?;
+        }
+
+        Ok(())
+    }
+
+    // ─── Tags ─────────────────────────────────────────────────────────
+
+    /// Crea un nuevo tag.
+    pub async fn create_tag(&self, name: &str) -> Result<i64> {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tags (name) VALUES (?) ON CONFLICT(name) DO UPDATE SET name=name RETURNING id"
+        )
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    /// Lista todos los tags con cantidad de libros.
+    pub async fn list_tags(&self) -> Result<Vec<TagStats>> {
+        let rows = sqlx::query_as::<_, TagStats>(
+            r#"
+            SELECT
+                t.id,
+                t.name,
+                COUNT(bt.book_id) as book_count
+            FROM tags t
+            LEFT JOIN book_tags bt ON t.id = bt.tag_id
+            GROUP BY t.id, t.name
+            ORDER BY book_count DESC, t.name ASC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Asigna un tag a un libro (crea el tag si no existe).
+    pub async fn add_tag_to_book(&self, book_id: i64, tag_name: &str) -> Result<()> {
+        let tag_id: i64 = sqlx::query_scalar(
+            "INSERT INTO tags (name) VALUES (?) ON CONFLICT(name) DO UPDATE SET name=name RETURNING id"
+        )
+        .bind(tag_name)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let _ = sqlx::query("INSERT OR IGNORE INTO book_tags (book_id, tag_id) VALUES (?, ?)")
+            .bind(book_id)
+            .bind(tag_id)
+            .execute(&self.pool)
+            .await;
+
+        Ok(())
+    }
+
+    /// Desvincula un tag de un libro.
+    pub async fn remove_tag_from_book(&self, book_id: i64, tag_name: &str) -> Result<()> {
+        let tag_id: Option<(i64,)> = sqlx::query_as("SELECT id FROM tags WHERE name = ?")
+            .bind(tag_name)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some((id,)) = tag_id {
+            sqlx::query("DELETE FROM book_tags WHERE book_id = ? AND tag_id = ?")
+                .bind(book_id)
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    // ─── OPDS queries ───────────────────────────────────────────────────
+
+    /// Lista libros de un autor específico por ID.
+    pub async fn list_books_by_author_id(&self, author_id: i64) -> Result<Vec<BookListItem>> {
+        let rows = sqlx::query_as::<_, BookListItem>(
+            r#"
+            SELECT
+                b.id,
+                b.title,
+                a.name as author_name,
+                s.name as series_name,
+                b.current_path,
+                b.is_normalized,
+                b.date_added,
+                b.file_hash
+            FROM books b
+            JOIN authors a ON b.author_id = a.id
+            LEFT JOIN series s ON b.series_id = s.id
+            WHERE b.author_id = ?
+            ORDER BY b.title ASC
+            "#
+        )
+        .bind(author_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Lista libros de una serie específica por ID.
+    pub async fn list_books_by_series_id(&self, series_id: i64) -> Result<Vec<BookListItem>> {
+        let rows = sqlx::query_as::<_, BookListItem>(
+            r#"
+            SELECT
+                b.id,
+                b.title,
+                a.name as author_name,
+                s.name as series_name,
+                b.current_path,
+                b.is_normalized,
+                b.date_added,
+                b.file_hash
+            FROM books b
+            JOIN authors a ON b.author_id = a.id
+            LEFT JOIN series s ON b.series_id = s.id
+            WHERE b.series_id = ?
+            ORDER BY b.title ASC
+            "#
+        )
+        .bind(series_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn delete_book(&self, book_id: i64, delete_file: bool) -> Result<Option<String>> {
         let pool = &self.pool;
 
@@ -579,6 +776,13 @@ pub struct AuthorStats {
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct SeriesStats {
+    pub id: i64,
+    pub name: String,
+    pub book_count: i64,
+}
+
+#[derive(sqlx::FromRow, Debug)]
+pub struct TagStats {
     pub id: i64,
     pub name: String,
     pub book_count: i64,
