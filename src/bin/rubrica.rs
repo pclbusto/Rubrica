@@ -94,6 +94,12 @@ enum Commands {
         #[arg(short, long)]
         long: bool,
     },
+    /// Lista todas las series con cantidad de libros
+    Series {
+        /// Muestra una serie por línea (formato vertical detallado)
+        #[arg(short, long)]
+        long: bool,
+    },
     /// Exporta aliases y config a un archivo TOML
     ExportConfig {
         /// Ruta del archivo de salida
@@ -155,7 +161,7 @@ impl Completer for RubricaCompleter {
 
         if tokens_before.is_empty() {
             // Primer token -> sugerir comandos
-            for cmd in &["init", "import", "import-dir", "books", "authors", "stats", "health", "normalize", "serve", "delete", "export-config", "import-config", "alias", "unalias", "exit", "help"] {
+            for cmd in &["init", "import", "import-dir", "books", "authors", "series", "stats", "health", "normalize", "serve", "delete", "export-config", "import-config", "alias", "unalias", "exit", "help"] {
                 if cmd.starts_with(token) {
                     pairs.push(Pair {
                         display: cmd.to_string(),
@@ -170,7 +176,7 @@ impl Completer for RubricaCompleter {
                     "normalize" => &["--base-dir"],
                     "serve" => &["--port"],
                     "books" => &["--long", "--extralong", "--normalized", "--author", "--series", "--fts", "--ids"],
-                    "authors" => &["--long"],
+                    "authors" | "series" => &["--long"],
                     _ => &[],
                 };
                 for f in flags {
@@ -427,6 +433,7 @@ fn print_help() {
     println!("      {}        Detalle completo de cada libro", "--long".dimmed());
     println!("      {}     Info avanzada (tamaño, capítulos del EPUB)", "--extralong".dimmed());
     println!("  {}   Lista todos los autores", "authors".yellow());
+    println!("  {}   Lista todas las series", "series".yellow());
     println!("  {}   Estadísticas globales", "stats".yellow());
     println!("  {}   Verifica salud editorial de un libro", "health".yellow());
     println!("  {}   Normaliza ubicación de un libro", "normalize".yellow());
@@ -536,6 +543,17 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                 print_authors_vertical(&authors);
             } else {
                 print_authors_table(&authors);
+            }
+        }
+        Commands::Series { long } => {
+            let db = LibraryDb::new(db_url).await?;
+            let series_list = db.list_series().await?;
+            if series_list.is_empty() {
+                println!("{}", "No hay series en la biblioteca.".yellow());
+            } else if long {
+                print_series_vertical(&series_list);
+            } else {
+                print_series_table(&series_list);
             }
         }
         Commands::ExportConfig { path } => {
@@ -868,6 +886,41 @@ fn print_authors_vertical(authors: &[rubrica::library_db::AuthorStats]) {
         println!("{} {}", "ID:".cyan().bold(), a.id.to_string().cyan());
         println!("{} {}", "Autor:".cyan().bold(), a.name);
         println!("{} {}", "Libros:".cyan().bold(), a.book_count.to_string().green());
+        println!();
+    }
+}
+
+/// Imprime series en formato tabla horizontal proporcional.
+fn print_series_table(series_list: &[rubrica::library_db::SeriesStats]) {
+    let tw = term_width();
+    let fixed = 5 + 1 + 7; // ID + sep + Libros
+    let available = tw.saturating_sub(fixed).max(20);
+    let name_w = available.max(10);
+
+    println!(
+        "{} {} {:<name$}",
+        "ID".cyan().bold(),
+        "Libros".cyan().bold(),
+        "Serie".cyan().bold(),
+        name = name_w
+    );
+    for s in series_list {
+        println!(
+            "{} {} {:<name$}",
+            format!("{:>5}", s.id).cyan(),
+            format!("{:>6}", s.book_count).green(),
+            truncate(&s.name, name_w),
+            name = name_w
+        );
+    }
+}
+
+/// Imprime series en formato vertical detallado.
+fn print_series_vertical(series_list: &[rubrica::library_db::SeriesStats]) {
+    for s in series_list {
+        println!("{} {}", "ID:".cyan().bold(), s.id.to_string().cyan());
+        println!("{} {}", "Serie:".cyan().bold(), s.name);
+        println!("{} {}", "Libros:".cyan().bold(), s.book_count.to_string().green());
         println!();
     }
 }

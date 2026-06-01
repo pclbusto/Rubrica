@@ -313,6 +313,25 @@ impl LibraryDb {
         Ok(rows)
     }
 
+    /// Lista todas las series con cantidad de libros.
+    pub async fn list_series(&self) -> Result<Vec<SeriesStats>> {
+        let rows = sqlx::query_as::<_, SeriesStats>(
+            r#"
+            SELECT
+                s.id,
+                s.name,
+                COUNT(b.id) as book_count
+            FROM series s
+            LEFT JOIN books b ON s.id = b.series_id
+            GROUP BY s.id, s.name
+            ORDER BY book_count DESC, s.name ASC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     /// Lista libros de un autor específico (búsqueda exacta o parcial).
     pub async fn list_books_by_author(&self, author_name: &str) -> Result<Vec<BookListItem>> {
         let rows = sqlx::query_as::<_, BookListItem>(
@@ -489,6 +508,13 @@ pub struct Alias {
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct AuthorStats {
+    pub id: i64,
+    pub name: String,
+    pub book_count: i64,
+}
+
+#[derive(sqlx::FromRow, Debug)]
+pub struct SeriesStats {
     pub id: i64,
     pub name: String,
     pub book_count: i64,
