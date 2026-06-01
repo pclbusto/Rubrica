@@ -483,6 +483,25 @@ impl LibraryDb {
         Ok(())
     }
 
+    /// Asigna un libro a una serie.
+    pub async fn assign_book_series(&self, book_id: i64, series_id: i64) -> Result<()> {
+        sqlx::query("UPDATE books SET series_id = ? WHERE id = ?")
+            .bind(series_id)
+            .bind(book_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Desvincula un libro de su serie (series_id = NULL).
+    pub async fn unassign_book_series(&self, book_id: i64) -> Result<()> {
+        sqlx::query("UPDATE books SET series_id = NULL WHERE id = ?")
+            .bind(book_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn delete_book(&self, book_id: i64, delete_file: bool) -> Result<Option<String>> {
         let pool = &self.pool;
 

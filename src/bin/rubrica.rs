@@ -113,6 +113,18 @@ enum Commands {
         #[arg(short, long)]
         force: bool,
     },
+    /// Asigna un libro a una serie
+    AssignSeries {
+        /// ID del libro en la base de datos
+        book_id: i64,
+        /// ID de la serie en la base de datos
+        series_id: i64,
+    },
+    /// Desvincula un libro de su serie
+    UnassignSeries {
+        /// ID del libro en la base de datos
+        book_id: i64,
+    },
     /// Exporta aliases y config a un archivo TOML
     ExportConfig {
         /// Ruta del archivo de salida
@@ -174,7 +186,7 @@ impl Completer for RubricaCompleter {
 
         if tokens_before.is_empty() {
             // Primer token -> sugerir comandos
-            for cmd in &["init", "import", "import-dir", "books", "authors", "series", "add-series", "delete-series", "stats", "health", "normalize", "serve", "delete", "export-config", "import-config", "alias", "unalias", "exit", "help"] {
+            for cmd in &["init", "import", "import-dir", "books", "authors", "series", "add-series", "delete-series", "assign-series", "unassign-series", "stats", "health", "normalize", "serve", "delete", "export-config", "import-config", "alias", "unalias", "exit", "help"] {
                 if cmd.starts_with(token) {
                     pairs.push(Pair {
                         display: cmd.to_string(),
@@ -449,6 +461,8 @@ fn print_help() {
     println!("  {}   Lista todas las series", "series".yellow());
     println!("  {}   Crea una nueva serie vacía", "add-series".yellow());
     println!("  {}   Borra una serie (usar --force si tiene libros)", "delete-series".yellow());
+    println!("  {}   Asigna un libro a una serie", "assign-series".yellow());
+    println!("  {}   Desvincula un libro de su serie", "unassign-series".yellow());
     println!("  {}   Estadísticas globales", "stats".yellow());
     println!("  {}   Verifica salud editorial de un libro", "health".yellow());
     println!("  {}   Normaliza ubicación de un libro", "normalize".yellow());
@@ -580,6 +594,16 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
             let db = LibraryDb::new(db_url).await?;
             db.delete_series(series_id, force).await?;
             println!("{} {}", "Serie".green(), "eliminada.".green());
+        }
+        Commands::AssignSeries { book_id, series_id } => {
+            let db = LibraryDb::new(db_url).await?;
+            db.assign_book_series(book_id, series_id).await?;
+            println!("{} {} {} {} {}", "Libro".green(), book_id.to_string().cyan(), "asignado a serie".green(), series_id.to_string().cyan(), "✓".green());
+        }
+        Commands::UnassignSeries { book_id } => {
+            let db = LibraryDb::new(db_url).await?;
+            db.unassign_book_series(book_id).await?;
+            println!("{} {} {}", "Libro".green(), book_id.to_string().cyan(), "desvinculado de serie.".green());
         }
         Commands::ExportConfig { path } => {
             let db = LibraryDb::new(db_url).await?;
