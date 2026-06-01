@@ -1,5 +1,4 @@
 use crate::library_db::LibraryDb;
-use crate::gutencore::GutenAdapter;
 use anyhow::Result;
 use serde::Serialize;
 
@@ -7,7 +6,6 @@ use serde::Serialize;
 pub struct LibraryMetrics {
     pub total_books: i64,
     pub total_reading_time_secs: i64,
-    // Agrega más métricas ligeras
 }
 
 #[derive(Debug, Serialize)]
@@ -49,11 +47,12 @@ impl Analytics {
     }
 
     /// Módulo de salud editorial agnóstico.
-    /// Descomprime el EPUB, carga GutenCore y ejecuta validate_links() en un thread bloqueante.
+    /// Abre el EPUB con GutenCore y ejecuta validate_links() en un thread bloqueante.
     pub async fn validate_links(book_id: i64, current_path: &str) -> Result<BookHealthReport> {
-        let (_temp_dir, core) = GutenAdapter::open_epub(current_path).await?;
-
+        let path = current_path.to_string();
         let broken = tokio::task::spawn_blocking(move || {
+            let core = gutencore::GutenCore::open_epub(&path)
+                .map_err(|e| anyhow::anyhow!("GutenCore error: {}", e))?;
             core.validate_links()
                 .map_err(|e| anyhow::anyhow!("GutenCore error: {}", e))
         })
@@ -62,7 +61,7 @@ impl Analytics {
         Ok(BookHealthReport {
             book_id,
             broken_links: broken.len() as u32,
-            orphan_anchors: 0, // GutenCore no desagrega este tipo específicamente aún
+            orphan_anchors: 0,
             css_discrepancies: 0,
         })
     }

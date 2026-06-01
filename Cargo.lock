@@ -866,6 +866,8 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror",
  "uuid",
  "walkdir",
@@ -1975,13 +1977,11 @@ dependencies = [
  "sha2",
  "shell-words",
  "sqlx",
- "tempfile",
  "terminal_size",
  "thiserror",
  "tokio",
  "toml",
  "walkdir",
- "zip",
 ]
 
 [[package]]

@@ -758,86 +758,21 @@ fn print_books_vertical(books: &[rubrica::library_db::BookListItem]) {
 
 /// Extrae tamaño en bytes y lista de capítulos de un archivo EPUB.
 fn extract_epub_info(epub_path: &str) -> Result<(u64, Vec<String>)> {
-    use std::io::Read;
-    let file = std::fs::File::open(epub_path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
+    let path = epub_path.to_string();
+    let (size, chapters) = std::thread::spawn(move || -> anyhow::Result<(u64, Vec<String>)> {
+        let core = gutencore::GutenCore::open_epub(&path)
+            .map_err(|e| anyhow::anyhow!("GutenCore error: {}", e))?;
 
-    // 1. container.xml -> encontrar OPF
-    let container = {
-        let mut f = archive.by_name("META-INF/container.xml")?;
-        let mut s = String::new();
-        f.read_to_string(&mut s)?;
-        s
-    };
-    let doc = roxmltree::Document::parse(&container)?;
-    let mut opf_path = None;
-    for node in doc.descendants() {
-        if node.tag_name().name() == "rootfile" {
-            if let Some(fp) = node.attribute("full-path") {
-                opf_path = Some(fp.to_string());
-                break;
-            }
-        }
-    }
-    let opf_path = opf_path.ok_or_else(|| anyhow::anyhow!("rootfile no encontrado en container.xml"))?;
+        let size = std::fs::metadata(&path)?.len();
+        let toc = core.get_toc()
+            .map_err(|e| anyhow::anyhow!("TOC error: {}", e))?;
+        let chapters: Vec<String> = toc.into_iter().map(|e| e.title).collect();
 
-    // 2. OPF -> encontrar TOC (NCX o NAV)
-    let opf = {
-        let mut f = archive.by_name(&opf_path)?;
-        let mut s = String::new();
-        f.read_to_string(&mut s)?;
-        s
-    };
-    let opf_doc = roxmltree::Document::parse(&opf)?;
-    let opf_dir = std::path::Path::new(&opf_path).parent().unwrap_or(std::path::Path::new(""));
+        Ok((size, chapters))
+    })
+    .join()
+    .unwrap()?;
 
-    let mut toc_path = None;
-    for node in opf_doc.descendants() {
-        if node.tag_name().name() == "item" {
-            let media = node.attribute("media-type").unwrap_or("");
-            let props = node.attribute("properties").unwrap_or("");
-            if media == "application/x-dtbncx+xml" || props.contains("nav") {
-                if let Some(href) = node.attribute("href") {
-                    toc_path = Some(opf_dir.join(href).to_string_lossy().replace('\\', "/"));
-                    break;
-                }
-            }
-        }
-    }
-
-    // 3. Leer TOC y extraer capítulos
-    let mut chapters = Vec::new();
-    if let Some(toc) = toc_path {
-        if let Ok(mut f) = archive.by_name(&toc) {
-            let mut s = String::new();
-            if f.read_to_string(&mut s).is_ok() {
-                let toc_doc = roxmltree::Document::parse(&s)?;
-                for node in toc_doc.descendants() {
-                    let tag = node.tag_name().name();
-                    if tag == "navPoint" {
-                        for child in node.children() {
-                            if child.tag_name().name() == "navLabel" {
-                                for txt in child.descendants() {
-                                    if txt.tag_name().name() == "text" {
-                                        if let Some(t) = txt.text() {
-                                            let trimmed = t.trim();
-                                            if !trimmed.is_empty() {
-                                                chapters.push(trimmed.to_string());
-                                            }
-                                        }
-                                        break;
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let size = std::fs::metadata(epub_path)?.len();
     Ok((size, chapters))
 }
 

@@ -1,8 +1,15 @@
 use crate::library_db::LibraryDb;
-use crate::gutencore::GutenAdapter;
-use anyhow::Result;
-use sha2::{Sha256, Digest};
+use anyhow::{Context, Result};
 use tokio::sync::mpsc;
+
+/// Metadatos extraídos de un EPUB para la pipeline de importación.
+#[derive(Debug, Clone)]
+struct EpubMeta {
+    title: String,
+    author: String,
+    series: Option<String>,
+    progress: Option<String>,
+}
 
 /// Resultado de una operación de importación individual.
 #[derive(Debug, Clone)]
@@ -19,19 +26,60 @@ impl Pipeline {
     /// Importa un archivo de forma asíncrona, validándolo y actualizando la DB e índice FTS5.
     /// Devuelve `ImportStatus::Imported` si es nuevo, o `ImportStatus::Duplicate` si ya existe.
     pub async fn import_file(db: &LibraryDb, original_path: String) -> Result<ImportStatus> {
-        // 0. Calcular hash SHA-256 del archivo para detectar duplicados
-        let file_hash = Self::compute_file_hash(&original_path).await?;
+        let path = original_path.clone();
 
+        // Abrir EPUB con GutenCore (calcula hash y extrae metadatos nativamente)
+        let (file_hash, metadata) = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, EpubMeta)> {
+            let core = gutencore::GutenCore::open_epub(&path)
+                .map_err(|e| anyhow::anyhow!("GutenCore error: {}", e))?;
+
+            let hash = core.file_hash.clone()
+                .context("Hash not computed by GutenCore")?
+                .to_string();
+
+            let md = core.get_metadata()
+                .context("No metadata loaded by GutenCore")?;
+
+            // Extraer metadatos rubrica:* del OPF (GutenCore no los lee)
+            let mut series = md.series.clone();
+            let mut progress = None;
+
+            if let Some(opf_path) = &core.opf_path {
+                if let Ok(opf_content) = std::fs::read_to_string(opf_path) {
+                    if let Ok(doc) = roxmltree::Document::parse(&opf_content) {
+                        let ns_opf = "http://www.idpf.org/2007/opf";
+                        for meta in doc.descendants().filter(|n| n.has_tag_name((ns_opf, "meta"))) {
+                            if let Some(prop) = meta.attribute("property") {
+                                if let Some(text) = meta.text() {
+                                    match prop {
+                                        "rubrica:series" => series = Some(text.trim().to_string()),
+                                        "rubrica:progress" => progress = Some(text.trim().to_string()),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok((hash, EpubMeta {
+                title: md.title.clone(),
+                author: md.author.clone().unwrap_or_else(|| "Unknown".to_string()),
+                series,
+                progress,
+            }))
+        })
+        .await??;
+
+        // 0. Detectar duplicados
         if let Some(existing_id) = db.find_by_hash(&file_hash).await? {
             return Ok(ImportStatus::Duplicate { existing_id });
         }
 
-        // 1. Integración con GutenCore (Validación de contenedor y OPF) y extracción dual de metadatos
-        let metadata = GutenAdapter::validate_epub(&original_path).await?;
-        
         let pool = db.pool();
 
-        // 2. Insertar o recuperar autor
+        // 1. Insertar o recuperar autor
         let author_id: i64 = sqlx::query_scalar(
             "INSERT INTO authors (name) VALUES (?) ON CONFLICT(name) DO UPDATE SET name=name RETURNING id"
         )
@@ -39,7 +87,7 @@ impl Pipeline {
         .fetch_one(pool)
         .await?;
 
-        // 3. Insertar o recuperar serie (si existe)
+        // 2. Insertar o recuperar serie (si existe)
         let series_id: Option<i64> = if let Some(series_name) = metadata.series {
             Some(sqlx::query_scalar(
                 "INSERT INTO series (name) VALUES (?) ON CONFLICT(name) DO UPDATE SET name=name RETURNING id"
@@ -51,7 +99,7 @@ impl Pipeline {
             None
         };
 
-        // 4. Registrar libro (con hash)
+        // 3. Registrar libro (con hash)
         let current_path = original_path.clone();
         let is_normalized = false;
 
@@ -73,23 +121,10 @@ impl Pipeline {
         .fetch_one(pool)
         .await?;
 
-        // 5. Indexación FTS5 Global (solo metadatos: título y autor)
+        // 4. Indexación FTS5 Global (solo metadatos: título y autor)
         db.insert_fts(book_id, &metadata.title, &metadata.author).await?;
         
         Ok(ImportStatus::Imported)
-    }
-
-    /// Computa el hash SHA-256 de un archivo de forma asíncrona.
-    async fn compute_file_hash(path: &str) -> Result<String> {
-        let path = path.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut file = std::fs::File::open(&path)?;
-            let mut hasher = Sha256::new();
-            std::io::copy(&mut file, &mut hasher)?;
-            let result = hasher.finalize();
-            Ok(hex::encode(result))
-        })
-        .await?
     }
 
     /// Importación por lotes no bloqueante utilizando canales de mensajes.
