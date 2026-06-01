@@ -468,7 +468,7 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
             if books.is_empty() {
                 println!("No se encontraron libros con los filtros aplicados.");
             } else if extralong {
-                print_books_extralong(&books)?;
+                print_books_extralong(&books).await?;
             } else if long {
                 print_books_vertical(&books);
             } else {
@@ -758,24 +758,20 @@ fn print_books_vertical(books: &[rubrica::library_db::BookListItem]) {
     }
 }
 
-/// Extrae tamaño en bytes y lista de capítulos de un archivo EPUB.
-fn extract_epub_info(epub_path: &str) -> Result<(u64, Vec<String>)> {
+/// Extrae la lista de capítulos de un archivo EPUB (best-effort).
+async fn extract_chapters(epub_path: &str) -> Result<Vec<String>> {
     let path = epub_path.to_string();
-    let (size, chapters) = std::thread::spawn(move || -> anyhow::Result<(u64, Vec<String>)> {
+    tokio::task::spawn_blocking(move || {
         let core = gutencore::GutenCore::open_epub(&path)
             .map_err(|e| anyhow::anyhow!("GutenCore error: {}", e))?;
 
-        let size = std::fs::metadata(&path)?.len();
         let toc = core.get_toc()
             .map_err(|e| anyhow::anyhow!("TOC error: {}", e))?;
         let chapters: Vec<String> = toc.into_iter().map(|e| e.title).collect();
 
-        Ok((size, chapters))
+        Ok(chapters)
     })
-    .join()
-    .unwrap()?;
-
-    Ok((size, chapters))
+    .await?
 }
 
 fn format_size(bytes: u64) -> String {
@@ -790,14 +786,25 @@ fn format_size(bytes: u64) -> String {
 }
 
 /// Imprime libros con información avanzada del EPUB (tamaño, capítulos).
-fn print_books_extralong(books: &[rubrica::library_db::BookListItem]) -> Result<()> {
+async fn print_books_extralong(books: &[rubrica::library_db::BookListItem]) -> Result<()> {
     for b in books {
         let series = b.series_name.as_deref().unwrap_or("-");
         let norm = if b.is_normalized { "Sí" } else { "No" };
         let hash = b.file_hash.as_deref().unwrap_or("-");
         let date = b.date_added.format("%Y-%m-%d %H:%M").to_string();
-        let (size, chapters) = extract_epub_info(&b.current_path).unwrap_or((0, Vec::new()));
-        let size_str = if size > 0 { format_size(size) } else { "-".to_string() };
+
+        // Tamaño: siempre disponible
+        let size = tokio::fs::metadata(&b.current_path).await?.len();
+        let size_str = format_size(size);
+
+        // Capítulos: best-effort (pueden fallar por DTD en toc.ncx)
+        let chapters = match extract_chapters(&b.current_path).await {
+            Ok(ch) => ch,
+            Err(e) => {
+                eprintln!("  [AVISO] No se pudieron leer capítulos para ID {}: {}", b.id, e);
+                Vec::new()
+            }
+        };
 
         println!("ID:          {}", b.id);
         println!("Título:      {}", b.title);
