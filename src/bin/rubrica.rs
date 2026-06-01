@@ -4,6 +4,7 @@ use rubrica::{Analytics, LibraryDb, Organizer, Pipeline, SyncSubsystem};
 use rubrica::pipeline::ImportStatus;
 use rustyline::completion::{Completer, Pair};
 use rustyline::{Config, Editor};
+use colored::*;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -258,10 +259,12 @@ fn parse_repl_line(line: &str) -> anyhow::Result<Vec<String>> {
 }
 
 async fn run_repl(db_url: &str) -> Result<()> {
-    println!("Rúbrica REPL - Modo interactivo");
-    println!("Base de datos: {}", db_url);
-    println!("Escribí 'help' para ver los comandos disponibles.");
-    println!("Presioná TAB para autocompletar.");
+    println!("{}", "═══════════════════════════════════════════".cyan().dimmed());
+    println!("  {} {}", "Rúbrica".cyan().bold(), "REPL - Modo interactivo".cyan());
+    println!("{}", "═══════════════════════════════════════════".cyan().dimmed());
+    println!("  {} {}", "Base de datos:".dimmed(), db_url.dimmed());
+    println!("  {} {}", "Tip:".dimmed(), "escribí 'help' para ver los comandos disponibles.".dimmed());
+    println!("  {} {}", "Tip:".dimmed(), "presioná TAB para autocompletar.".dimmed());
     println!();
 
     let db = LibraryDb::new(db_url).await?;
@@ -292,7 +295,7 @@ async fn run_repl(db_url: &str) -> Result<()> {
                 let mut words = match parse_repl_line(line) {
                     Ok(w) => w,
                     Err(e) => {
-                        eprintln!("Error parseando comando: {}", e);
+                        eprintln!("{} {}", "Error parseando comando:".red(), e);
                         continue;
                     }
                 };
@@ -320,30 +323,30 @@ async fn run_repl(db_url: &str) -> Result<()> {
                 let cmd = match ReplCommand::try_parse_from(&args) {
                     Ok(c) => c.cmd,
                     Err(e) => {
-                        eprintln!("{}", e);
+                        eprintln!("{}", e.to_string().red());
                         continue;
                     }
                 };
 
                 if let Commands::Exit = cmd {
-                    println!("Chau!");
+                    println!("{}", "Chau!".green());
                     break;
                 }
 
                 if let Err(e) = execute(db_url, cmd).await {
-                    eprintln!("Error: {}", e);
+                    eprintln!("{} {}", "Error:".red(), e.to_string().red());
                 }
             }
             Err(rustyline::error::ReadlineError::Interrupted) => {
-                println!("^C");
+                println!("{}", "^C".dimmed());
                 continue;
             }
             Err(rustyline::error::ReadlineError::Eof) => {
-                println!("Chau!");
+                println!("{}", "Chau!".green());
                 break;
             }
             Err(err) => {
-                eprintln!("Error: {:?}", err);
+                eprintln!("{} {:?}", "Error:".red(), err);
                 break;
             }
         }
@@ -407,48 +410,48 @@ fn parse_fts_query(raw: &str) -> String {
 }
 
 fn print_help() {
-    println!("Comandos disponibles:");
-    println!("  init                     Inicializa la base de datos");
-    println!("  import <ruta.epub>       Importa un EPUB");
-    println!("  import-dir <ruta>        Importa recursivamente todos los EPUBs de un directorio");
-    println!("  books [filtros]          Lista libros");
-    println!("      --ids <1,5,10>       Filtrar por IDs específicos");
-    println!("      --author <nombre>    Filtrar por autor (parcial)");
-    println!("      --series <nombre>    Filtrar por serie (parcial)");
-    println!("      --fts <query>        Buscar por título/autor (FTS5)");
-    println!("                         Sintaxis: palabra1 palabra2 (AND)");
-    println!("                                   -palabra (NOT)");
-    println!("                                   +palabra (obligatorio)");
-    println!("                                   \"frase exacta\"");
-    println!("      --normalized         Solo libros normalizados");
-    println!("      --long               Detalle completo de cada libro");
-    println!("      --extralong          Info avanzada (tamaño, capítulos del EPUB)");
-    println!("  authors                  Lista todos los autores");
-    println!("  stats                    Estadísticas globales");
-    println!("  health <id>              Verifica salud editorial de un libro");
-    println!("  normalize <id> [--base-dir <dir>]  Normaliza ubicación de un libro");
-    println!("  serve [--port <n>]       Inicia servidor OPDS (bloqueante)");
-    println!("  delete <id> [--with-file]  Borra de la base de datos (por defecto conserva el archivo; --with-file también lo borra del disco)");
-    println!("  export-config <ruta>     Exporta aliases a un archivo TOML");
-    println!("  import-config <ruta>     Importa aliases desde un archivo TOML");
-    println!("  alias <nombre> [comando]  Crea/actualiza alias (sin comando lista todos)");
-    println!("  unalias <nombre>          Borra un alias");
-    println!("  exit                     Sale del REPL");
-    println!("  help                     Muestra esta ayuda");
+    println!("{}", "Comandos disponibles:".cyan().bold());
+    println!("  {}   Inicializa la base de datos", "init".yellow());
+    println!("  {}   Importa un EPUB", "import".yellow());
+    println!("  {}   Importa recursivamente todos los EPUBs de un directorio", "import-dir".yellow());
+    println!("  {}   Lista libros", "books".yellow());
+    println!("      {}       Filtrar por IDs específicos", "--ids".dimmed());
+    println!("      {}    Filtrar por autor (parcial)", "--author".dimmed());
+    println!("      {}    Filtrar por serie (parcial)", "--series".dimmed());
+    println!("      {}     Buscar por título/autor (FTS5)", "--fts".dimmed());
+    println!("                         {} palabra1 palabra2 {}", "Sintaxis:".dimmed(), "(AND)".dimmed());
+    println!("                                   {} -palabra {}", "".dimmed(), "(NOT)".dimmed());
+    println!("                                   {} +palabra {}", "".dimmed(), "(obligatorio)".dimmed());
+    println!("                                   {} \"frase exacta\"", "".dimmed());
+    println!("      {}       Solo libros normalizados", "--normalized".dimmed());
+    println!("      {}        Detalle completo de cada libro", "--long".dimmed());
+    println!("      {}     Info avanzada (tamaño, capítulos del EPUB)", "--extralong".dimmed());
+    println!("  {}   Lista todos los autores", "authors".yellow());
+    println!("  {}   Estadísticas globales", "stats".yellow());
+    println!("  {}   Verifica salud editorial de un libro", "health".yellow());
+    println!("  {}   Normaliza ubicación de un libro", "normalize".yellow());
+    println!("  {}   Inicia servidor OPDS (bloqueante)", "serve".yellow());
+    println!("  {}   Borra de la base de datos", "delete".yellow());
+    println!("  {}   Exporta aliases a un archivo TOML", "export-config".yellow());
+    println!("  {}   Importa aliases desde un archivo TOML", "import-config".yellow());
+    println!("  {}   Crea/actualiza alias", "alias".yellow());
+    println!("  {}   Borra un alias", "unalias".yellow());
+    println!("  {}   Sale del REPL", "exit".yellow());
+    println!("  {}   Muestra esta ayuda", "help".yellow());
 }
 
 async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
     match cmd {
         Commands::Init => {
             let _db = LibraryDb::new(db_url).await?;
-            println!("Base de datos inicializada.");
+            println!("{}", "Base de datos inicializada.".green());
         }
         Commands::Import { path } => {
             let db = LibraryDb::new(db_url).await?;
             let path_str = path.to_string_lossy().to_string();
-            println!("Importando: {}", path_str);
+            println!("{} {}", "Importando:".cyan(), path_str.dimmed());
             Pipeline::import_file(&db, path_str).await?;
-            println!("Importación exitosa.");
+            println!("{}", "Importación exitosa.".green());
         }
         Commands::ImportDir { path } => {
             import_directory(db_url, path).await?;
@@ -466,7 +469,7 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                 db.list_books_filtered(norm_filter, author_ref, series_ref, ids_ref).await?
             };
             if books.is_empty() {
-                println!("No se encontraron libros con los filtros aplicados.");
+                println!("{}", "No se encontraron libros con los filtros aplicados.".yellow());
             } else if extralong {
                 print_books_extralong(&books).await?;
             } else if long {
@@ -480,15 +483,15 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
             let base_dir_str = base_dir.to_string_lossy().to_string();
             let base_dir_expanded = expand_tilde(&base_dir_str);
             let base_path = PathBuf::from(base_dir_expanded);
-            println!("Normalizando libro {} en {:?}...", book_id, base_path);
+            println!("{} {} en {}...", "Normalizando libro".cyan(), book_id, base_path.display().to_string().dimmed());
             Organizer::normalize_book(&db, book_id, &base_path).await?;
-            println!("Normalización completada.");
+            println!("{}", "Normalización completada.".green());
         }
         Commands::Stats => {
             let db = LibraryDb::new(db_url).await?;
             let metrics = Analytics::get_global_metrics(&db).await?;
-            println!("Libros totales: {}", metrics.total_books);
-            println!("Tiempo total de lectura: {}s", metrics.total_reading_time_secs);
+            println!("{} {}", "Libros totales:".cyan().bold(), metrics.total_books);
+            println!("{} {}s", "Tiempo total de lectura:".cyan().bold(), metrics.total_reading_time_secs);
         }
         Commands::Health { book_id } => {
             let db = LibraryDb::new(db_url).await?;
@@ -496,38 +499,39 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                 .bind(book_id)
                 .fetch_one(db.pool())
                 .await?;
-            println!("Analizando salud del libro {}...", book_id);
+            println!("{} {}", "Analizando salud del libro".cyan(), book_id);
             let report = Analytics::validate_links(book_id, &row.0).await?;
-            println!("Links rotos: {}", report.broken_links);
-            println!("Anclajes huérfanos: {}", report.orphan_anchors);
-            println!("Discrepancias CSS: {}", report.css_discrepancies);
+            println!("{} {}", "Links rotos:".cyan(), if report.broken_links > 0 { report.broken_links.to_string().red() } else { "0".green() });
+            println!("{} {}", "Anclajes huérfanos:".cyan(), report.orphan_anchors);
+            println!("{} {}", "Discrepancias CSS:".cyan(), report.css_discrepancies);
         }
         Commands::Serve { port } => {
             let db = LibraryDb::new(db_url).await?;
-            println!("Iniciando servidor OPDS en http://0.0.0.0:{}/opds", port);
-            println!("Presiona Ctrl+C para detener.");
+            println!("{} http://0.0.0.0:{}/opds", "Iniciando servidor OPDS".cyan().bold(), port);
+            println!("{}", "Presiona Ctrl+C para detener.".dimmed());
             SyncSubsystem::start_opds_server(db, port).await?;
             tokio::signal::ctrl_c().await?;
-            println!("Servidor detenido.");
+            println!("{}", "Servidor detenido.".green());
         }
         Commands::Delete { book_id, with_file } => {
             let db = LibraryDb::new(db_url).await?;
             let deleted_file = db.delete_book(book_id, with_file).await?;
             if with_file {
                 if let Some(path) = deleted_file {
-                    println!("Libro {} eliminado. Archivo borrado: {}", book_id, path);
+                    println!("{} {} {}", "Libro".red(), book_id, "eliminado. Archivo borrado:".red());
+                    println!("  {}", path.dimmed());
                 } else {
-                    println!("Libro {} eliminado de la base de datos (archivo no encontrado en disco).", book_id);
+                    println!("{} {}", "Libro".red(), "eliminado de la base de datos (archivo no encontrado en disco).".yellow());
                 }
             } else {
-                println!("Libro {} eliminado de la base de datos.", book_id);
+                println!("{} {}", "Libro".yellow(), "eliminado de la base de datos.".yellow());
             }
         }
         Commands::Authors { long } => {
             let db = LibraryDb::new(db_url).await?;
             let authors = db.list_authors().await?;
             if authors.is_empty() {
-                println!("No hay autores en la biblioteca.");
+                println!("{}", "No hay autores en la biblioteca.".yellow());
             } else if long {
                 print_authors_vertical(&authors);
             } else {
@@ -543,7 +547,7 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
             }
             let toml = config.to_toml()?;
             tokio::fs::write(&path, toml).await?;
-            println!("Config exportada a {}", path.display());
+            println!("{} {}", "Config exportada a".green(), path.display().to_string().dimmed());
         }
         Commands::ImportConfig { path } => {
             let db = LibraryDb::new(db_url).await?;
@@ -554,7 +558,7 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                 db.set_alias(&name, &cmd).await?;
                 count += 1;
             }
-            println!("{} alias(es) importados desde {}", count, path.display());
+            println!("{} {} {} {}", count.to_string().green(), "alias(es) importados desde".green(), path.display().to_string().dimmed(), "✓".green());
         }
         Commands::Alias { name, command } => {
             let db = LibraryDb::new(db_url).await?;
@@ -565,27 +569,27 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                         // Sin comando -> listar alias
                         let aliases = db.list_aliases().await?;
                         if aliases.is_empty() {
-                            println!("No hay aliases definidos.");
+                            println!("{}", "No hay aliases definidos.".yellow());
                         } else {
-                            println!("Aliases:");
+                            println!("{}", "Aliases:".cyan().bold());
                             for a in aliases {
-                                println!("  {} = {}", a.name, a.command);
+                                println!("  {} = {}", a.name.yellow(), a.command.dimmed());
                             }
                         }
                     } else {
                         db.set_alias(&alias_name, &cmd).await?;
-                        println!("Alias '{}' = '{}' guardado.", alias_name, cmd);
+                        println!("{} {} {} {} {}", "Alias".green(), alias_name.yellow(), "=".dimmed(), cmd.dimmed(), "guardado.".green());
                     }
                 }
                 None => {
                     // Sin nombre -> listar todos los aliases
                     let aliases = db.list_aliases().await?;
                     if aliases.is_empty() {
-                        println!("No hay aliases definidos.");
+                        println!("{}", "No hay aliases definidos.".yellow());
                     } else {
-                        println!("Aliases:");
+                        println!("{}", "Aliases:".cyan().bold());
                         for a in aliases {
-                            println!("  {} = {}", a.name, a.command);
+                            println!("  {} = {}", a.name.yellow(), a.command.dimmed());
                         }
                     }
                 }
@@ -594,7 +598,7 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
         Commands::Unalias { name } => {
             let db = LibraryDb::new(db_url).await?;
             db.delete_alias(&name).await?;
-            println!("Alias '{}' eliminado.", name);
+            println!("{} {} {}", "Alias".green(), name.yellow(), "eliminado.".green());
         }
         Commands::Exit => {}
     }
@@ -620,11 +624,11 @@ async fn import_directory(db_url: &str, path: PathBuf) -> Result<()> {
     }
 
     if epub_paths.is_empty() {
-        println!("No se encontraron archivos .epub en {}", path_str);
+        println!("{} {}", "No se encontraron archivos .epub en".yellow(), path_str.dimmed());
         return Ok(());
     }
 
-    println!("Encontrados {} EPUB(s) en {}. Importando...", epub_paths.len(), path_str);
+    println!("{} {} {} {}", "Encontrados".cyan(), epub_paths.len().to_string().cyan().bold(), "EPUB(s) en".cyan(), path_str.dimmed());
 
     // 2. Procesar en batch
     let db = LibraryDb::new(db_url).await?;
@@ -640,24 +644,24 @@ async fn import_directory(db_url: &str, path: PathBuf) -> Result<()> {
         match result {
             Ok(ImportStatus::Imported) => {
                 imported += 1;
-                println!("  [{}/{}] OK: {}", n, total, path);
+                println!("  [{}/{}] {} {}", n, total, "OK".green(), path.dimmed());
             }
             Ok(ImportStatus::Duplicate { existing_id }) => {
                 duplicates += 1;
-                println!("  [{}/{}] DUPLICADO (ID: {}): {}", n, total, existing_id, path);
+                println!("  [{}/{}] {} (ID: {}) {}", n, total, "DUPLICADO".yellow(), existing_id, path.dimmed());
             }
             Err(e) => {
                 errors += 1;
-                eprintln!("  [{}/{}] ERROR: {} - {}", n, total, path, e);
+                eprintln!("  [{}/{}] {} {} - {}", n, total, "ERROR".red(), path.dimmed(), e.to_string().red());
             }
         }
     }
 
     println!();
-    println!("Resumen:");
-    println!("  Importados: {}", imported);
-    println!("  Duplicados: {}", duplicates);
-    println!("  Errores:    {}", errors);
+    println!("{}", "Resumen:".cyan().bold());
+    println!("  {} {}", "Importados:".green(), imported.to_string().green().bold());
+    println!("  {} {}", "Duplicados:".yellow(), duplicates.to_string().yellow());
+    println!("  {} {}", "Errores:".red(), errors.to_string().red().bold());
 
     Ok(())
 }
@@ -719,17 +723,21 @@ fn print_books_table(books: &[rubrica::library_db::BookListItem]) {
     let series_w = series_w.max(8);
 
     println!(
-        "{:>5} {:<title$} {:<author$} {:<series$} {}",
-        "ID", "Título", "Autor", "Serie", "Normalizado",
+        "{} {:<title$} {:<author$} {:<series$} {}",
+        "ID".cyan().bold(),
+        "Título".cyan().bold(),
+        "Autor".cyan().bold(),
+        "Serie".cyan().bold(),
+        "Normalizado".cyan().bold(),
         title = title_w, author = author_w, series = series_w
     );
 
     for b in books {
         let series = b.series_name.as_deref().unwrap_or("-");
-        let norm = if b.is_normalized { "Sí" } else { "No" };
+        let norm = if b.is_normalized { "Sí".green() } else { "No".red() };
         println!(
-            "{:>5} {:<title$} {:<author$} {:<series$} {}",
-            b.id,
+            "{} {:<title$} {:<author$} {:<series$} {}",
+            format!("{:>5}", b.id).cyan(),
             truncate(&b.title, title_w),
             truncate(&b.author_name, author_w),
             truncate(series, series_w),
@@ -743,17 +751,17 @@ fn print_books_table(books: &[rubrica::library_db::BookListItem]) {
 fn print_books_vertical(books: &[rubrica::library_db::BookListItem]) {
     for b in books {
         let series = b.series_name.as_deref().unwrap_or("-");
-        let norm = if b.is_normalized { "Sí" } else { "No" };
+        let norm = if b.is_normalized { "Sí".green() } else { "No".red() };
         let hash = b.file_hash.as_deref().unwrap_or("-");
         let date = b.date_added.format("%Y-%m-%d %H:%M").to_string();
-        println!("ID:          {}", b.id);
-        println!("Título:      {}", b.title);
-        println!("Autor:       {}", b.author_name);
-        println!("Serie:       {}", series);
-        println!("Normalizado: {}", norm);
-        println!("Fecha:       {}", date);
-        println!("Hash:        {}", hash);
-        println!("Ruta:        {}", b.current_path);
+        println!("{} {}", "ID:".cyan().bold(), b.id.to_string().cyan());
+        println!("{} {}", "Título:".cyan().bold(), b.title);
+        println!("{} {}", "Autor:".cyan().bold(), b.author_name);
+        println!("{} {}", "Serie:".cyan().bold(), series);
+        println!("{} {}", "Normalizado:".cyan().bold(), norm);
+        println!("{} {}", "Fecha:".cyan().bold(), date);
+        println!("{} {}", "Hash:".cyan().bold(), hash.dimmed());
+        println!("{} {}", "Ruta:".cyan().bold(), b.current_path.dimmed());
         println!();
     }
 }
@@ -806,23 +814,23 @@ async fn print_books_extralong(books: &[rubrica::library_db::BookListItem]) -> R
             }
         };
 
-        println!("ID:          {}", b.id);
-        println!("Título:      {}", b.title);
-        println!("Autor:       {}", b.author_name);
-        println!("Serie:       {}", series);
-        println!("Normalizado: {}", norm);
-        println!("Fecha:       {}", date);
-        println!("Hash:        {}", hash);
-        println!("Tamaño:      {}", size_str);
-        println!("Ruta:        {}", b.current_path);
+        println!("{} {}", "ID:".cyan().bold(), b.id.to_string().cyan());
+        println!("{} {}", "Título:".cyan().bold(), b.title);
+        println!("{} {}", "Autor:".cyan().bold(), b.author_name);
+        println!("{} {}", "Serie:".cyan().bold(), series);
+        println!("{} {}", "Normalizado:".cyan().bold(), norm);
+        println!("{} {}", "Fecha:".cyan().bold(), date);
+        println!("{} {}", "Hash:".cyan().bold(), hash.dimmed());
+        println!("{} {}", "Tamaño:".cyan().bold(), size_str.green());
+        println!("{} {}", "Ruta:".cyan().bold(), b.current_path.dimmed());
 
         if !chapters.is_empty() {
-            println!("Capítulos:");
+            println!("{}", "Capítulos:".cyan().bold());
             for (i, ch) in chapters.iter().enumerate() {
-                println!("  {}. {}", i + 1, ch);
+                println!("  {} {}", format!("{}.", i + 1).dimmed(), ch);
             }
         } else {
-            println!("Capítulos:   (no disponibles)");
+            println!("{} {}", "Capítulos:".cyan().bold(), "(no disponibles)".red());
         }
         println!();
     }
@@ -836,11 +844,20 @@ fn print_authors_table(authors: &[rubrica::library_db::AuthorStats]) {
     let available = tw.saturating_sub(fixed).max(20);
     let name_w = available.max(10);
 
-    println!("{:>5} {:>6} {:<name$}", "ID", "Libros", "Autor", name = name_w);
+    println!(
+        "{} {} {:<name$}",
+        "ID".cyan().bold(),
+        "Libros".cyan().bold(),
+        "Autor".cyan().bold(),
+        name = name_w
+    );
     for a in authors {
         println!(
-            "{:>5} {:>6} {:<name$}",
-            a.id, a.book_count, truncate(&a.name, name_w), name = name_w
+            "{} {} {:<name$}",
+            format!("{:>5}", a.id).cyan(),
+            format!("{:>6}", a.book_count).green(),
+            truncate(&a.name, name_w),
+            name = name_w
         );
     }
 }
@@ -848,9 +865,9 @@ fn print_authors_table(authors: &[rubrica::library_db::AuthorStats]) {
 /// Imprime autores en formato vertical detallado.
 fn print_authors_vertical(authors: &[rubrica::library_db::AuthorStats]) {
     for a in authors {
-        println!("ID:     {}", a.id);
-        println!("Autor:  {}", a.name);
-        println!("Libros: {}", a.book_count);
+        println!("{} {}", "ID:".cyan().bold(), a.id.to_string().cyan());
+        println!("{} {}", "Autor:".cyan().bold(), a.name);
+        println!("{} {}", "Libros:".cyan().bold(), a.book_count.to_string().green());
         println!();
     }
 }

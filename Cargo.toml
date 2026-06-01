@@ -23,6 +23,7 @@ hex = "0.4"
 walkdir = "2.5"
 toml = "0.8"
 terminal_size = "0.3"
+colored = "2.1"
 
 [[bin]]
 name = "rubrica"
