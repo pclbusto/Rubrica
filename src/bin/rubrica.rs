@@ -865,7 +865,7 @@ fn print_books_table(books: &[rubrica::library_db::BookListItem]) {
     let series_w = series_w.max(8);
 
     println!(
-        "{} {:<title$} {:<author$} {:<series$} {}",
+        "{:>5} {:<title$} {:<author$} {:<series$} {}",
         "ID".cyan().bold(),
         "Título".cyan().bold(),
         "Autor".cyan().bold(),
@@ -878,8 +878,8 @@ fn print_books_table(books: &[rubrica::library_db::BookListItem]) {
         let series = b.series_name.as_deref().unwrap_or("-");
         let norm = if b.is_normalized { "Sí".green() } else { "No".red() };
         println!(
-            "{} {:<title$} {:<author$} {:<series$} {}",
-            format!("{:>5}", b.id).cyan(),
+            "{:>5} {:<title$} {:<author$} {:<series$} {}",
+            b.id.to_string().cyan(),
             truncate(&b.title, title_w),
             truncate(&b.author_name, author_w),
             truncate(series, series_w),
@@ -987,7 +987,7 @@ fn print_authors_table(authors: &[rubrica::library_db::AuthorStats]) {
     let name_w = available.max(10);
 
     println!(
-        "{} {} {:<name$}",
+        "{:>5} {:>6} {:<name$}",
         "ID".cyan().bold(),
         "Libros".cyan().bold(),
         "Autor".cyan().bold(),
@@ -995,9 +995,9 @@ fn print_authors_table(authors: &[rubrica::library_db::AuthorStats]) {
     );
     for a in authors {
         println!(
-            "{} {} {:<name$}",
-            format!("{:>5}", a.id).cyan(),
-            format!("{:>6}", a.book_count).green(),
+            "{:>5} {:>6} {:<name$}",
+            a.id.to_string().cyan(),
+            a.book_count.to_string().green(),
             truncate(&a.name, name_w),
             name = name_w
         );
@@ -1022,7 +1022,7 @@ fn print_series_table(series_list: &[rubrica::library_db::SeriesStats]) {
     let name_w = available.max(10);
 
     println!(
-        "{} {} {:<name$}",
+        "{:>5} {:>6} {:<name$}",
         "ID".cyan().bold(),
         "Libros".cyan().bold(),
         "Serie".cyan().bold(),
@@ -1030,9 +1030,9 @@ fn print_series_table(series_list: &[rubrica::library_db::SeriesStats]) {
     );
     for s in series_list {
         println!(
-            "{} {} {:<name$}",
-            format!("{:>5}", s.id).cyan(),
-            format!("{:>6}", s.book_count).green(),
+            "{:>5} {:>6} {:<name$}",
+            s.id.to_string().cyan(),
+            s.book_count.to_string().green(),
             truncate(&s.name, name_w),
             name = name_w
         );
