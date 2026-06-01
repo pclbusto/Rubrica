@@ -58,6 +58,9 @@ enum Commands {
         /// Filtrar por IDs específicos (coma separado, ej: 1,5,10)
         #[arg(short, long, value_delimiter = ',')]
         ids: Option<Vec<i64>>,
+        /// Limitar cantidad de resultados (0 = sin límite)
+        #[arg(short, long, default_value_t = 0)]
+        limit: usize,
     },
     /// Normaliza la ubicación de un libro en disco
     Normalize {
@@ -93,12 +96,18 @@ enum Commands {
         /// Muestra un autor por línea (formato vertical detallado)
         #[arg(short, long)]
         long: bool,
+        /// Limitar cantidad de resultados (0 = sin límite)
+        #[arg(short, long, default_value_t = 0)]
+        limit: usize,
     },
     /// Lista todas las series con cantidad de libros
     Series {
         /// Muestra una serie por línea (formato vertical detallado)
         #[arg(short, long)]
         long: bool,
+        /// Limitar cantidad de resultados (0 = sin límite)
+        #[arg(short, long, default_value_t = 0)]
+        limit: usize,
     },
     /// Crea una nueva serie vacía
     AddSeries {
@@ -200,8 +209,8 @@ impl Completer for RubricaCompleter {
                 let flags: &[&str] = match cmd {
                     "normalize" => &["--base-dir"],
                     "serve" => &["--port"],
-                    "books" => &["--long", "--extralong", "--normalized", "--author", "--series", "--fts", "--ids"],
-                    "authors" | "series" => &["--long"],
+                    "books" => &["--long", "--extralong", "--normalized", "--author", "--series", "--fts", "--ids", "--limit"],
+                    "authors" | "series" => &["--long", "--limit"],
                     _ => &[],
                 };
                 for f in flags {
@@ -457,6 +466,7 @@ fn print_help() {
     println!("      {}       Solo libros normalizados", "--normalized".dimmed());
     println!("      {}        Detalle completo de cada libro", "--long".dimmed());
     println!("      {}     Info avanzada (tamaño, capítulos del EPUB)", "--extralong".dimmed());
+    println!("      {}       Limitar cantidad de resultados", "--limit".dimmed());
     println!("  {}   Lista todos los autores", "authors".yellow());
     println!("  {}   Lista todas las series", "series".yellow());
     println!("  {}   Crea una nueva serie vacía", "add-series".yellow());
@@ -492,9 +502,9 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
         Commands::ImportDir { path } => {
             import_directory(db_url, path).await?;
         }
-        Commands::Books { long, extralong, normalized, author, series, fts, ids } => {
+        Commands::Books { long, extralong, normalized, author, series, fts, ids, limit } => {
             let db = LibraryDb::new(db_url).await?;
-            let books = if let Some(query) = fts {
+            let mut books = if let Some(query) = fts {
                 let parsed = parse_fts_query(&query);
                 db.search_fts(&parsed).await?
             } else {
@@ -504,6 +514,10 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                 let ids_ref = ids.as_deref();
                 db.list_books_filtered(norm_filter, author_ref, series_ref, ids_ref).await?
             };
+            let total = books.len();
+            if limit > 0 && books.len() > limit {
+                books.truncate(limit);
+            }
             if books.is_empty() {
                 println!("{}", "No se encontraron libros con los filtros aplicados.".yellow());
             } else if extralong {
@@ -512,6 +526,9 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                 print_books_vertical(&books);
             } else {
                 print_books_table(&books);
+            }
+            if limit > 0 && total > limit {
+                println!("{} {} {}", "Mostrando".dimmed(), limit.to_string().yellow(), format!("de {} registros (usá --limit 0 para ver todos)", total).dimmed());
             }
         }
         Commands::Normalize { book_id, base_dir } => {
@@ -563,9 +580,13 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
                 println!("{} {}", "Libro".yellow(), "eliminado de la base de datos.".yellow());
             }
         }
-        Commands::Authors { long } => {
+        Commands::Authors { long, limit } => {
             let db = LibraryDb::new(db_url).await?;
-            let authors = db.list_authors().await?;
+            let mut authors = db.list_authors().await?;
+            let total = authors.len();
+            if limit > 0 && authors.len() > limit {
+                authors.truncate(limit);
+            }
             if authors.is_empty() {
                 println!("{}", "No hay autores en la biblioteca.".yellow());
             } else if long {
@@ -573,16 +594,26 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
             } else {
                 print_authors_table(&authors);
             }
+            if limit > 0 && total > limit {
+                println!("{} {} {}", "Mostrando".dimmed(), limit.to_string().yellow(), format!("de {} registros (usá --limit 0 para ver todos)", total).dimmed());
+            }
         }
-        Commands::Series { long } => {
+        Commands::Series { long, limit } => {
             let db = LibraryDb::new(db_url).await?;
-            let series_list = db.list_series().await?;
+            let mut series_list = db.list_series().await?;
+            let total = series_list.len();
+            if limit > 0 && series_list.len() > limit {
+                series_list.truncate(limit);
+            }
             if series_list.is_empty() {
                 println!("{}", "No hay series en la biblioteca.".yellow());
             } else if long {
                 print_series_vertical(&series_list);
             } else {
                 print_series_table(&series_list);
+            }
+            if limit > 0 && total > limit {
+                println!("{} {} {}", "Mostrando".dimmed(), limit.to_string().yellow(), format!("de {} registros (usá --limit 0 para ver todos)", total).dimmed());
             }
         }
         Commands::AddSeries { name } => {
