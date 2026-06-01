@@ -59,7 +59,7 @@ enum Commands {
         #[arg(short, long, value_delimiter = ',')]
         ids: Option<Vec<i64>>,
         /// Limitar cantidad de resultados (0 = sin límite)
-        #[arg(short, long, default_value_t = 0)]
+        #[arg(long, default_value_t = 0)]
         limit: usize,
     },
     /// Normaliza la ubicación de un libro en disco
@@ -97,7 +97,7 @@ enum Commands {
         #[arg(short, long)]
         long: bool,
         /// Limitar cantidad de resultados (0 = sin límite)
-        #[arg(short, long, default_value_t = 0)]
+        #[arg(long, default_value_t = 0)]
         limit: usize,
     },
     /// Lista todas las series con cantidad de libros
@@ -106,7 +106,7 @@ enum Commands {
         #[arg(short, long)]
         long: bool,
         /// Limitar cantidad de resultados (0 = sin límite)
-        #[arg(short, long, default_value_t = 0)]
+        #[arg(long, default_value_t = 0)]
         limit: usize,
     },
     /// Crea una nueva serie vacía
