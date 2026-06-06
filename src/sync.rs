@@ -38,6 +38,8 @@ impl SyncSubsystem {
             .route("/opds/author/:id", get(opds_author_books))
             .route("/opds/series", get(opds_series))
             .route("/opds/series/:id", get(opds_series_books))
+            .route("/opds/cover/:id", get(opds_cover))
+            .route("/opds/browser", get(opds_browser))
             .with_state(db);
 
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -305,13 +307,26 @@ fn opds_entry(book: &BookListItem, updated: &str) -> String {
         format!("  <dc:publisher>{}</dc:publisher>\n", xml_escape(series))
     };
 
+    let cover_links = if book.cover_href.is_some() {
+        let mt = book.cover_media_type.as_deref().unwrap_or("image/jpeg");
+        format!(
+            r#"    <link rel="http://opds-spec.org/image" href="/opds/cover/{id}" type="{mt}"/>
+    <link rel="http://opds-spec.org/image/thumbnail" href="/opds/cover/{id}" type="{mt}"/>
+"#,
+            id = book.id,
+            mt = mt,
+        )
+    } else {
+        String::new()
+    };
+
     format!(
         r#"  <entry>
     <title>{title}</title>
     <id>urn:rubrica:book:{id}</id>
     <author><name>{author}</name></author>
     <updated>{updated}</updated>
-{series_tag}    <link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="/opds/download/{id}" title="Descargar EPUB"/>
+{series_tag}{cover_links}    <link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="/opds/download/{id}" title="Descargar EPUB"/>
   </entry>
 "#,
         title = title,
@@ -319,7 +334,184 @@ fn opds_entry(book: &BookListItem, updated: &str) -> String {
         author = author,
         updated = updated,
         series_tag = series_tag,
+        cover_links = cover_links,
     )
+}
+
+/// Sirve la imagen de portada de un libro directamente desde el EPUB.
+async fn opds_cover(State(db): State<LibraryDb>, AxumPath(book_id): AxumPath<i64>) -> Response {
+    let book = match db.get_book(book_id).await {
+        Ok(Some(b)) => b,
+        Ok(None) => {
+            return error_response(StatusCode::NOT_FOUND, "Libro no encontrado");
+        }
+        Err(e) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("Database error: {}", e));
+        }
+    };
+
+    let (Some(href), Some(media_type)) = (book.cover_href, book.cover_media_type) else {
+        return error_response(StatusCode::NOT_FOUND, "Libro sin portada");
+    };
+
+    let path = book.current_path;
+    let image_data = match tokio::task::spawn_blocking(move || {
+        let core = gutencore::GutenCore::open_epub(&path)?;
+        let opf_dir = core.opf_dir.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("OPF dir not set")
+        })?;
+        let abs_path = opf_dir.join(&href);
+        std::fs::read(&abs_path).map_err(|e| anyhow::anyhow!("Error leyendo imagen: {}", e))
+    }).await {
+        Ok(Ok(data)) => data,
+        Ok(Err(e)) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{}", e));
+        }
+        Err(e) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("Task error: {}", e));
+        }
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, media_type)
+        .body(Body::from(image_data))
+        .unwrap()
+}
+
+/// Página HTML navegable para ver la biblioteca desde un navegador web.
+async fn opds_browser(State(db): State<LibraryDb>) -> Response {
+    let books = match db.list_books().await {
+        Ok(b) => b,
+        Err(e) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("Database error: {}", e));
+        }
+    };
+
+    let mut cards = String::new();
+    for book in &books {
+        let title = xml_escape(&book.title);
+        let author = xml_escape(&book.author_name);
+        let series = book.series_name.as_deref().map(xml_escape).unwrap_or_default();
+        let series_html = if series.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<div class="series">{}</div>"#, series)
+        };
+
+        let cover_html = if book.cover_href.is_some() {
+            format!(
+                r#"<img src="/opds/cover/{id}" alt="{title}" loading="lazy"/>"#,
+                id = book.id,
+                title = title,
+            )
+        } else {
+            r#"<div class="no-cover">Sin portada</div>"#.to_string()
+        };
+
+        cards.push_str(&format!(
+            r#"<div class="card">
+  <div class="cover">{cover}</div>
+  <div class="info">
+    <div class="title">{title}</div>
+    <div class="author">{author}</div>
+    {series}
+    <a class="download" href="/opds/download/{id}" download>Descargar EPUB</a>
+  </div>
+</div>
+"#,
+            cover = cover_html,
+            title = title,
+            author = author,
+            series = series_html,
+            id = book.id,
+        ));
+    }
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Biblioteca Rúbrica</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin: 0; padding: 1rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #121212; color: #e0e0e0;
+  }}
+  h1 {{ text-align: center; margin-bottom: 1.5rem; color: #fff; }}
+  .grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 1rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }}
+  .card {{
+    background: #1e1e1e;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }}
+  .cover {{
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    background: #333;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }}
+  .cover img {{ width: 100%; height: 100%; object-fit: cover; display: block; }}
+  .no-cover {{ color: #888; font-size: 0.85rem; }}
+  .info {{
+    padding: 0.75rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }}
+  .title {{ font-weight: 600; font-size: 0.95rem; color: #fff; line-height: 1.2; }}
+  .author {{ font-size: 0.8rem; color: #bbb; }}
+  .series {{ font-size: 0.75rem; color: #888; font-style: italic; }}
+  .download {{
+    margin-top: auto;
+    padding-top: 0.5rem;
+    text-align: center;
+    background: #2a2a2a;
+    color: #81c784;
+    text-decoration: none;
+    border-radius: 4px;
+    padding: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }}
+  .download:hover {{ background: #333; }}
+  .stats {{ text-align: center; margin-top: 1.5rem; color: #888; font-size: 0.8rem; }}
+</style>
+</head>
+<body>
+<h1>Biblioteca Rúbrica</h1>
+<div class="grid">
+{cards}
+</div>
+<div class="stats">{count} libros</div>
+</body>
+</html>"#,
+        cards = cards,
+        count = books.len(),
+    );
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .body(Body::from(html))
+        .unwrap()
 }
 
 fn xml_escape(s: &str) -> String {

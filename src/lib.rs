@@ -10,4 +10,4 @@ pub use pipeline::Pipeline;
 pub use organizer::Organizer;
 pub use analytics::{Analytics, LibraryMetrics, BookHealthReport};
 pub use sync::SyncSubsystem;
-pub use config::RubricaConfig;
+pub use config::{RubricaConfig, default_db_path, default_db_url};

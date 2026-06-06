@@ -6,15 +6,16 @@ use rustyline::completion::{Completer, Pair};
 use rustyline::{Config, Editor};
 use colored::*;
 use std::path::PathBuf;
+use rubrica_pdf_pipeline::PipelineStatus;
 
 #[derive(Parser)]
 #[command(name = "rubrica")]
 #[command(about = "Rúbrica CLI - Administrador de bibliotecas EPUB")]
 #[command(arg_required_else_help = false)]
 struct Cli {
-    /// Ruta a la base de datos SQLite de Rúbrica
-    #[arg(short, long, default_value = "library.db")]
-    db: String,
+    /// Ruta a la base de datos SQLite de Rúbrica (por defecto: ~/.local/share/rubrica/library.db)
+    #[arg(short, long)]
+    db: Option<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -33,6 +34,23 @@ enum Commands {
     ImportDir {
         /// Ruta al directorio
         path: PathBuf,
+    },
+    /// Convierte un PDF a EPUB usando análisis de layout (pdftohtml)
+    ImportPdf {
+        /// Ruta al archivo .pdf
+        path: PathBuf,
+        /// Título del libro (por defecto usa el nombre del archivo)
+        #[arg(short, long)]
+        title: Option<String>,
+        /// Idioma del libro (ej: es, en)
+        #[arg(short, long, default_value = "es")]
+        lang: String,
+        /// Directorio de salida para el EPUB generado
+        #[arg(short, long, default_value = "./")]
+        output_dir: PathBuf,
+        /// Activa el OCR vía ONNX (requiere modelo .onnx configurado)
+        #[arg(long)]
+        use_ocr: bool,
     },
     /// Lista libros de la biblioteca
     Books {
@@ -290,11 +308,15 @@ impl Completer for RubricaCompleter {
                         });
                     }
                 }
-            } else if cmd == "import" {
-                // Para import, el token abarca todo desde después del primer espacio tras "import"
-                if let Some(import_pos) = line_up_to_pos.find("import ") {
-                    start = import_pos + 7; // len("import ")
-                    token = &line_up_to_pos[start..];
+            } else if cmd == "import" || cmd == "import-dir" {
+                // Para import/import-dir, el token abarca todo desde después del primer espacio tras el comando
+                let cmd_len = cmd.len() + 1; // +1 for the space
+                if let Some(cmd_pos) = line_up_to_pos.find(cmd) {
+                    let new_start = cmd_pos + cmd_len;
+                    if new_start <= line_up_to_pos.len() {
+                        start = new_start;
+                        token = &line_up_to_pos[start..];
+                    }
                 }
                 pairs.extend(path_completions(token));
             } else if cmd == "normalize" && tokens_before.len() == 1 {
@@ -350,7 +372,12 @@ fn path_completions(token: &str) -> Vec<Pair> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let db_url = to_db_url(&cli.db);
+    let db_str = cli.db.unwrap_or_else(|| rubrica::default_db_url());
+    let db_url = if db_str.starts_with("sqlite:") {
+        db_str
+    } else {
+        to_db_url(&db_str)
+    };
 
     match cli.command {
         Some(cmd) => execute(&db_url, cmd).await,
@@ -590,6 +617,68 @@ async fn execute(db_url: &str, cmd: Commands) -> Result<()> {
         }
         Commands::ImportDir { path } => {
             import_directory(db_url, path).await?;
+        }
+        Commands::ImportPdf { path, title, lang, output_dir, use_ocr } => {
+            let pdf_path = path;
+            let book_title = title.unwrap_or_else(|| {
+                pdf_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Libro PDF")
+                    .to_string()
+            });
+
+            println!("{} {}", "Convirtiendo PDF a EPUB:".cyan(), pdf_path.display().to_string().dimmed());
+
+            let config = rubrica_pdf_pipeline::PipelineConfig::default();
+            if use_ocr {
+                println!("{} {}", "OCR:".cyan(), "activado (requiere modelo ONNX configurado)".yellow());
+            }
+
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<PipelineStatus>(32);
+
+            // Tarea que imprime el progreso en tiempo real.
+            let progress_task = tokio::spawn(async move {
+                while let Some(status) = rx.recv().await {
+                    match status {
+                        PipelineStatus::ExtractionStarted { total_pages_hint } => {
+                            println!("{} {} páginas detectadas",
+                                "  Extracción:".cyan(),
+                                total_pages_hint.map(|n| n.to_string()).unwrap_or("?".into()));
+                        }
+                        PipelineStatus::PatternsDetected { patterns_count } => {
+                            println!("  {} {} patrones de ruido detectados",
+                                "✓".green(), patterns_count);
+                        }
+                        PipelineStatus::ChunkProcessed { chunk_index, output_chars } => {
+                            println!("  {} capítulo {} ({} chars)",
+                                "✓".green(), chunk_index + 1, output_chars);
+                        }
+                        PipelineStatus::AssemblyStarted => {
+                            println!("  {} ensamblando EPUB…", "→".cyan());
+                        }
+                        PipelineStatus::Completed { .. } => break,
+                        _ => {}
+                    }
+                }
+            });
+
+            let pipeline = rubrica_pdf_pipeline::PdfPipeline::new(config);
+            let (epub_path, sha256) = pipeline
+                .convert_with_sender(&pdf_path, &output_dir, &book_title, &lang, tx)
+                .await?;
+
+            progress_task.await?;
+
+            println!("{} {}", "EPUB generado:".green(), epub_path.display().to_string().bold());
+            println!("{} {}", "SHA-256:".dimmed(), sha256.dimmed());
+
+            // Insertar en la base de datos como un libro importado.
+            let db = LibraryDb::new(db_url).await?;
+            let path_str = epub_path.to_string_lossy().to_string();
+            println!("{} {}", "Importando a biblioteca:".cyan(), path_str.dimmed());
+            Pipeline::import_file(&db, path_str).await?;
+            println!("{}", "Importación completada.".green());
         }
         Commands::Books { long, extralong, normalized, author, series, fts, ids, limit, offset, tag } => {
             let db = LibraryDb::new(db_url).await?;
@@ -1111,6 +1200,19 @@ async fn print_books_extralong(books: &[rubrica::library_db::BookListItem]) -> R
         println!("{} {}", "Hash:".cyan().bold(), hash.dimmed());
         println!("{} {}", "Tamaño:".cyan().bold(), size_str.green());
         println!("{} {}", "Ruta:".cyan().bold(), b.current_path.dimmed());
+
+        // Portada: leída de la base de datos (extraída al importar)
+        if let (Some(href), Some(media_type)) = (&b.cover_href, &b.cover_media_type) {
+            println!(
+                "{} {} {} {}",
+                "Portada:".cyan().bold(),
+                "Sí".green(),
+                "→".dimmed(),
+                format!("{} ({})", href, media_type).dimmed()
+            );
+        } else {
+            println!("{} {}", "Portada:".cyan().bold(), "No".red());
+        }
 
         if !chapters.is_empty() {
             println!("{}", "Capítulos:".cyan().bold());

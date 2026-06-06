@@ -99,6 +99,12 @@ impl LibraryDb {
                     .bind(book_id)
                     .execute(pool)
                     .await?;
+
+                let _ = sqlx::query("INSERT INTO book_hashes (hash, book_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
+                    .bind(&h)
+                    .bind(book_id)
+                    .execute(pool)
+                    .await;
             }
         }
 
@@ -143,6 +149,14 @@ impl LibraryDb {
             .execute(pool)
             .await;
 
+        // Migración: agregar columnas de portada si no existen
+        let _ = sqlx::query("ALTER TABLE books ADD COLUMN cover_href TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE books ADD COLUMN cover_media_type TEXT")
+            .execute(pool)
+            .await;
+
         // Tabla FTS5 independiente para búsqueda de metadatos (título y autor).
         // No usa content='books' para evitar la complejidad de triggers;
         // el código gestiona inserciones/actualizaciones/borrados explícitamente.
@@ -173,6 +187,22 @@ impl LibraryDb {
                 PRIMARY KEY (book_id, tag_id)
             );"
         ).execute(pool).await?;
+
+        // Tabla para historial de hashes
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS book_hashes (
+                hash TEXT PRIMARY KEY,
+                book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );"
+        ).execute(pool).await?;
+
+        // Migración: popular book_hashes con los hashes existentes
+        let _ = sqlx::query(
+            "INSERT INTO book_hashes (hash, book_id)
+             SELECT file_hash, id FROM books WHERE file_hash IS NOT NULL
+             ON CONFLICT DO NOTHING"
+        ).execute(pool).await;
 
         Ok(())
     }
@@ -267,7 +297,9 @@ impl LibraryDb {
                 b.current_path,
                 b.is_normalized,
                 b.date_added,
-                b.file_hash
+                b.file_hash,
+                b.cover_href,
+                b.cover_media_type
             FROM books b
             JOIN authors a ON b.author_id = a.id
             LEFT JOIN series s ON b.series_id = s.id
@@ -301,7 +333,9 @@ impl LibraryDb {
                 a.name as author_name,
                 s.name as series_name,
                 b.current_path,
-                b.date_added
+                b.date_added,
+                b.cover_href,
+                b.cover_media_type
             FROM books b
             JOIN authors a ON b.author_id = a.id
             LEFT JOIN series s ON b.series_id = s.id
@@ -364,7 +398,9 @@ impl LibraryDb {
                 b.current_path,
                 b.is_normalized,
                 b.date_added,
-                b.file_hash
+                b.file_hash,
+                b.cover_href,
+                b.cover_media_type
             FROM books b
             JOIN authors a ON b.author_id = a.id
             LEFT JOIN series s ON b.series_id = s.id
@@ -390,7 +426,9 @@ impl LibraryDb {
                 b.current_path,
                 b.is_normalized,
                 b.date_added,
-                b.file_hash
+                b.file_hash,
+                b.cover_href,
+                b.cover_media_type
             FROM books b
             JOIN books_fts f ON b.id = f.rowid
             JOIN authors a ON b.author_id = a.id
@@ -446,13 +484,28 @@ impl LibraryDb {
         Ok(rows)
     }
 
-    /// Busca un libro por su hash de archivo. Devuelve el ID si existe.
+    /// Busca un libro por su hash de archivo (actual o historial). Devuelve el ID si existe.
     pub async fn find_by_hash(&self, hash: &str) -> Result<Option<i64>> {
-        let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM books WHERE file_hash = ?")
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT book_id FROM book_hashes WHERE hash = ?
+             UNION
+             SELECT id FROM books WHERE file_hash = ?"
+        )
+            .bind(hash)
             .bind(hash)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(|r| r.0))
+    }
+
+    /// Añade un hash al historial de un libro.
+    pub async fn add_book_hash(&self, book_id: i64, hash: &str) -> Result<()> {
+        sqlx::query("INSERT INTO book_hashes (hash, book_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
+            .bind(hash)
+            .bind(book_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     /// Elimina un libro de la base de datos. Si `delete_file` es true,
@@ -659,7 +712,9 @@ impl LibraryDb {
                 b.current_path,
                 b.is_normalized,
                 b.date_added,
-                b.file_hash
+                b.file_hash,
+                b.cover_href,
+                b.cover_media_type
             FROM books b
             JOIN authors a ON b.author_id = a.id
             LEFT JOIN series s ON b.series_id = s.id
@@ -685,7 +740,9 @@ impl LibraryDb {
                 b.current_path,
                 b.is_normalized,
                 b.date_added,
-                b.file_hash
+                b.file_hash,
+                b.cover_href,
+                b.cover_media_type
             FROM books b
             JOIN authors a ON b.author_id = a.id
             LEFT JOIN series s ON b.series_id = s.id
@@ -749,6 +806,8 @@ pub struct BookListItem {
     pub is_normalized: bool,
     pub date_added: DateTime<Utc>,
     pub file_hash: Option<String>,
+    pub cover_href: Option<String>,
+    pub cover_media_type: Option<String>,
 }
 
 #[derive(sqlx::FromRow, Debug, Clone)]
@@ -759,6 +818,8 @@ pub struct BookDetail {
     pub series_name: Option<String>,
     pub current_path: String,
     pub date_added: DateTime<Utc>,
+    pub cover_href: Option<String>,
+    pub cover_media_type: Option<String>,
 }
 
 #[derive(sqlx::FromRow, Debug)]

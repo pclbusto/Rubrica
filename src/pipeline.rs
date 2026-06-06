@@ -9,6 +9,8 @@ struct EpubMeta {
     author: String,
     series: Option<String>,
     progress: Option<String>,
+    cover_href: Option<String>,
+    cover_media_type: Option<String>,
 }
 
 /// Resultado de una operación de importación individual.
@@ -63,11 +65,18 @@ impl Pipeline {
                 }
             }
 
+            // Extraer portada
+            let cover = core.get_cover_image();
+            let cover_href = cover.map(|c| c.href.clone());
+            let cover_media_type = cover.map(|c| c.media_type.clone());
+
             Ok((hash, EpubMeta {
                 title: md.title.clone(),
                 author: md.author.clone().unwrap_or_else(|| "Unknown".to_string()),
                 series,
                 progress,
+                cover_href,
+                cover_media_type,
             }))
         })
         .await??;
@@ -105,8 +114,8 @@ impl Pipeline {
 
         let book_id: i64 = sqlx::query_scalar(
             r#"
-            INSERT INTO books (title, author_id, series_id, original_path, current_path, is_normalized, reading_progress, file_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO books (title, author_id, series_id, original_path, current_path, is_normalized, reading_progress, file_hash, cover_href, cover_media_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             "#
         )
@@ -118,10 +127,15 @@ impl Pipeline {
         .bind(is_normalized)
         .bind(&metadata.progress)
         .bind(&file_hash)
+        .bind(&metadata.cover_href)
+        .bind(&metadata.cover_media_type)
         .fetch_one(pool)
         .await?;
 
-        // 4. Indexación FTS5 Global (solo metadatos: título y autor)
+        // 4. Guardar hash en el historial
+        db.add_book_hash(book_id, &file_hash).await?;
+
+        // 5. Indexación FTS5 Global (solo metadatos: título y autor)
         db.insert_fts(book_id, &metadata.title, &metadata.author).await?;
         
         Ok(ImportStatus::Imported)

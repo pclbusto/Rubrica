@@ -1,0 +1,13 @@
+[package]
+name = "rubrica-gtk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.8", features = ["v4_14"] }
+libadwaita = { version = "0.6", features = ["v1_4"] }
+gdk-pixbuf = "0.19"
+tokio = { version = "1.37", features = ["full"] }
+rubrica = { path = "../" }
+gutencore = { workspace = true }
+qrcode = "0.14"
